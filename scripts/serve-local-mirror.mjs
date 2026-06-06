@@ -3,9 +3,17 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createReadStream } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import crypto from 'node:crypto'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..', 'site')
+const modulePartsRoot = path.resolve(__dirname, '..', 'modules')
+const modulesRoot = path.resolve(__dirname, '..', 'modules', 'web')
+const dataDir = path.resolve(__dirname, '..', 'data')
+const agentsFile = path.join(dataDir, 'uploaded-agents.json')
+const moduleAgentsFile = path.join(dataDir, 'module-agent-launch-agents.json')
+const avatarProfilesFile = path.join(dataDir, 'module-avatar-profiles.json')
+const socialConversationsFile = path.join(dataDir, 'module-social-conversations.json')
 const port = Number(process.env.PORT || 4174)
 
 const mime = {
@@ -29,7 +37,99 @@ const json = (res, body, status = 200) => {
   return true
 }
 
-const mockApi = (req, res, requestUrl) => {
+const readJsonBody = async (req) => {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  const raw = Buffer.concat(chunks).toString('utf8')
+  return raw ? JSON.parse(raw) : {}
+}
+
+const text = (value, max = 500) => String(value || '').trim().slice(0, max)
+
+const defaultUploadedAgents = [
+  {
+    id: 'local-demo-research-agent',
+    name: 'Research Buddy Agent',
+    owner: 'Local Demo',
+    tagline: 'A sample uploaded agent that other users can open.',
+    description: 'Summarizes papers, drafts outreach, and answers questions from a hosted chat endpoint.',
+    chatUrl: 'https://example.com/agent-chat',
+    apiUrl: '',
+    demoVideoUrl: '',
+    category: 'Research',
+    created_at: new Date().toISOString(),
+  },
+]
+
+const loadUploadedAgents = async () => {
+  try {
+    return JSON.parse(await fs.readFile(agentsFile, 'utf8'))
+  } catch {
+    await fs.mkdir(dataDir, { recursive: true })
+    await fs.writeFile(agentsFile, JSON.stringify(defaultUploadedAgents, null, 2))
+    return defaultUploadedAgents
+  }
+}
+
+const saveUploadedAgents = async (agents) => {
+  await fs.mkdir(dataDir, { recursive: true })
+  await fs.writeFile(agentsFile, JSON.stringify(agents, null, 2))
+}
+
+const loadJsonFile = async (file, fallback) => {
+  try {
+    return JSON.parse(await fs.readFile(file, 'utf8'))
+  } catch {
+    await fs.mkdir(dataDir, { recursive: true })
+    await fs.writeFile(file, JSON.stringify(fallback, null, 2))
+    return fallback
+  }
+}
+
+const saveJsonFile = async (file, value) => {
+  await fs.mkdir(dataDir, { recursive: true })
+  await fs.writeFile(file, JSON.stringify(value, null, 2))
+}
+
+const makeUploadedAgent = (body) => ({
+  id: crypto.randomUUID(),
+  name: text(body.name, 80),
+  owner: text(body.owner, 80),
+  tagline: text(body.tagline, 160),
+  description: text(body.description, 1200),
+  chatUrl: text(body.chatUrl, 400),
+  apiUrl: text(body.apiUrl, 400),
+  demoVideoUrl: text(body.demoVideoUrl, 400),
+  category: text(body.category, 80) || 'General',
+  created_at: new Date().toISOString(),
+})
+
+const makeModuleAgent = (body) => ({
+  ...makeUploadedAgent(body),
+  repoUrl: text(body.repoUrl, 400),
+  eventName: text(body.eventName, 120),
+  status: text(body.status, 80) || 'submitted',
+})
+
+const makeAvatarProfile = (body) => {
+  const agentName = text(body.agentName, 80)
+  const role = text(body.role, 120)
+  const personality = text(body.personality, 500)
+  const visualStyle = text(body.visualStyle, 500)
+  const color = text(body.color, 80)
+  return {
+    id: crypto.randomUUID(),
+    agentName,
+    role,
+    personality,
+    visualStyle,
+    color,
+    prompt: `Create a virtual avatar for ${agentName}: ${role}. Personality: ${personality}. Visual style: ${visualStyle}. Color direction: ${color}.`,
+    created_at: new Date().toISOString(),
+  }
+}
+
+const mockApi = async (req, res, requestUrl) => {
   if (!requestUrl.pathname.startsWith('/api/')) return false
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
@@ -78,6 +178,83 @@ const mockApi = (req, res, requestUrl) => {
   }
 
   const pathName = requestUrl.pathname
+  if (pathName === '/api/module-agent-launch/agents' && req.method === 'GET') {
+    const fallback = defaultUploadedAgents.map((agent) => ({ ...agent, repoUrl: '', eventName: 'Local Hackathon', status: 'demo' }))
+    return json(res, await loadJsonFile(moduleAgentsFile, fallback))
+  }
+  if (pathName === '/api/module-agent-launch/agents' && req.method === 'POST') {
+    try {
+      const agent = makeModuleAgent(await readJsonBody(req))
+      if (!agent.name || !agent.owner || !agent.description || !agent.chatUrl) {
+        return json(res, { error: 'name, owner, description, and chatUrl are required' }, 400)
+      }
+      const agents = await loadJsonFile(moduleAgentsFile, [])
+      const nextAgents = [agent, ...agents].slice(0, 200)
+      await saveJsonFile(moduleAgentsFile, nextAgents)
+      return json(res, agent, 201)
+    } catch {
+      return json(res, { error: 'Invalid JSON body' }, 400)
+    }
+  }
+  if (pathName === '/api/module-avatar/profiles' && req.method === 'GET') return json(res, await loadJsonFile(avatarProfilesFile, []))
+  if (pathName === '/api/module-avatar/profiles' && req.method === 'POST') {
+    try {
+      const profile = makeAvatarProfile(await readJsonBody(req))
+      if (!profile.agentName || !profile.role || !profile.personality || !profile.visualStyle) {
+        return json(res, { error: 'agentName, role, personality, and visualStyle are required' }, 400)
+      }
+      const profiles = await loadJsonFile(avatarProfilesFile, [])
+      const nextProfiles = [profile, ...profiles].slice(0, 200)
+      await saveJsonFile(avatarProfilesFile, nextProfiles)
+      return json(res, profile, 201)
+    } catch {
+      return json(res, { error: 'Invalid JSON body' }, 400)
+    }
+  }
+  if (pathName === '/api/module-social/conversations' && req.method === 'POST') {
+    try {
+      const body = await readJsonBody(req)
+      const agents = await loadJsonFile(moduleAgentsFile, [])
+      const a = agents.find((agent) => agent.id === body.agentA)
+      const b = agents.find((agent) => agent.id === body.agentB)
+      const topic = text(body.topic, 500)
+      if (!a || !b || !topic) return json(res, { error: 'agentA, agentB, and topic are required' }, 400)
+      const item = {
+        id: crypto.randomUUID(),
+        agentA: a.id,
+        agentB: b.id,
+        topic,
+        report: {
+          match: `${a.name} x ${b.name}`,
+          topic,
+          summary: `${a.name} should lead context gathering. ${b.name} should challenge assumptions and produce a next-step checklist.`,
+          suggested_next_steps: ['Open both agent chat URLs', 'Run a 5-minute scoped conversation', 'Save outputs into the project room'],
+          open_urls: [a.chatUrl, b.chatUrl].filter(Boolean),
+        },
+        created_at: new Date().toISOString(),
+      }
+      const conversations = await loadJsonFile(socialConversationsFile, [])
+      await saveJsonFile(socialConversationsFile, [item, ...conversations].slice(0, 200))
+      return json(res, item, 201)
+    } catch {
+      return json(res, { error: 'Invalid JSON body' }, 400)
+    }
+  }
+  if (pathName === '/api/uploaded-agents' && req.method === 'GET') return json(res, await loadUploadedAgents())
+  if (pathName === '/api/uploaded-agents' && req.method === 'POST') {
+    try {
+      const agent = makeUploadedAgent(await readJsonBody(req))
+      if (!agent.name || !agent.owner || !agent.description || !agent.chatUrl) {
+        return json(res, { error: 'name, owner, description, and chatUrl are required' }, 400)
+      }
+      const agents = await loadUploadedAgents()
+      const nextAgents = [agent, ...agents].slice(0, 200)
+      await saveUploadedAgents(nextAgents)
+      return json(res, agent, 201)
+    } catch {
+      return json(res, { error: 'Invalid JSON body' }, 400)
+    }
+  }
   if (pathName.includes('/auth/') || pathName.endsWith('/me') || pathName.includes('/profile')) return json(res, merchant)
   if (pathName.includes('/showcase/')) return json(res, {
     title: 'Local demo',
@@ -110,8 +287,43 @@ const exists = async (target) => {
 
 const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url || '/', `http://localhost:${port}`)
-  if (mockApi(req, res, requestUrl)) return
+  if (await mockApi(req, res, requestUrl)) return
   const decodedPath = decodeURIComponent(requestUrl.pathname)
+
+  if (decodedPath.startsWith('/module-parts/')) {
+    const modulePartPath = decodedPath.replace(/^\/module-parts\/?/, '')
+    const safeModulePartPath = path.normalize(modulePartPath).replace(/^\/+/, '')
+    const target = path.join(modulePartsRoot, safeModulePartPath)
+    if (!target.startsWith(modulePartsRoot) || !(await exists(target))) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('Not found')
+      return
+    }
+    const ext = path.extname(target)
+    res.writeHead(200, { 'Content-Type': mime[ext] || 'application/octet-stream' })
+    createReadStream(target).pipe(res)
+    return
+  }
+
+  if (decodedPath === '/modules' || decodedPath.startsWith('/modules/')) {
+    const modulePath = decodedPath.replace(/^\/modules\/?/, '')
+    const safeModulePath = path.normalize(modulePath).replace(/^\/+/, '')
+    let target = path.join(modulesRoot, safeModulePath || 'index.html')
+    if (!(await exists(target))) {
+      const htmlTarget = path.join(modulesRoot, `${safeModulePath}.html`)
+      target = (await exists(htmlTarget)) ? htmlTarget : path.join(modulesRoot, 'index.html')
+    }
+    if (!target.startsWith(modulesRoot) || !(await exists(target))) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('Not found')
+      return
+    }
+    const ext = path.extname(target)
+    res.writeHead(200, { 'Content-Type': mime[ext] || 'application/octet-stream' })
+    createReadStream(target).pipe(res)
+    return
+  }
+
   const safePath = path.normalize(decodedPath).replace(/^\/+/, '')
   let target = path.join(root, safePath)
 
