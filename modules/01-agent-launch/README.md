@@ -1,35 +1,35 @@
-# Module 01: Agent Upload And One-Click Launch
+# Module 01: Another Me
 
 Owner: TBD
 
 ## Scope
 
-- Choose and document the upload format.
-- Manage each agent's own repository metadata.
-- Implement one-click launch/open behavior.
-- Manage hackathon competition agents.
+- Upload an agent as a skill package.
+- Build an Another Me persona skill from questionnaire data.
+- Save the generated skill/persona metadata into the shared agent store.
+- Run chat through the existing `/api/module-agent-launch/chat` endpoint.
 
-## Current V0 Decision
+## Direction
 
-Do not execute uploaded code in the mirror server. V0 uses a manifest-style
-upload:
+- Web UI controls upload, questionnaire, and user-facing flow.
+- Another Me loads the uploaded skill/persona.
+- The same LLM API configuration remains in `/gpfs/users/liujinxiu/.env`.
+- Future chat requests can pass `agentId` so Another Me loads that agent's saved `skillPrompt`.
 
-- Basic profile: name, owner, tagline, description, category.
-- Runtime pointers: chat URL, API URL, repository URL.
-- Demo media: video URL.
-- Hackathon metadata: event name, team name, track, status.
-
-The first working target is: user A uploads an agent profile, user B sees it in
-the shared gallery and clicks `Open Agent`.
+This is not full code execution. V0 treats uploaded packages as skill/persona
+instructions and keeps real zip extraction/sandboxing as the next implementation step.
 
 ## Files
 
-- Page: `modules/web/agent-launch.html`
-- Script: `modules/web/agent-launch.js`
-- API/data: `/api/module-agent-launch/agents`, `data/module-agent-launch-agents.json`
+- Page: `modules/01-agent-launch/page.html`
+- Script: `modules/01-agent-launch/page.js`
+- Style: `modules/01-agent-launch/page.css`
+- Route: `/modules/agent-launch`
+- API/data: `/api/module-agent-launch/agents`, `/api/module-agent-launch/chat`, `data/module-agent-launch-agents.json`
 
-## Later
+## Next
 
-- Add GitHub repo validation.
-- Add Docker/sandbox launch only after the endpoint-based flow is stable.
-- Add agent health checks.
+- Add a visible agent collection/chat entry.
+- Upload and extract skill zip on the server.
+- Store `SKILL.md` under `data/agent-skills/{agentId}/`.
+- Pass `agentId` from chat UI into `/api/module-agent-launch/chat`.
