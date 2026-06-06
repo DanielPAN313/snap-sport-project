@@ -1,0 +1,9 @@
+{
+  "name": "another-me-mirror",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "mirror": "node scripts/serve-local-mirror.mjs"
+  }
+}
