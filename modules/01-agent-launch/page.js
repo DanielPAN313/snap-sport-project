@@ -4,15 +4,20 @@ const chatForm = document.querySelector('#chatForm');
 const messages = document.querySelector('#messages');
 const emptyState = document.querySelector('#emptyState');
 const historyList = document.querySelector('#historyList');
+const draftAgentList = document.querySelector('#draftAgentList');
+const publishedAgentList = document.querySelector('#publishedAgentList');
 const historySearch = document.querySelector('#historySearch');
 const statusNode = document.querySelector('#status');
 const avatarStatusNode = document.querySelector('#avatarStatus');
 const chatStatusNode = document.querySelector('#chatStatus');
 const mcpStatusNode = document.querySelector('#mcpStatus');
 const sendButton = document.querySelector('#sendButton');
-const submitButton = document.querySelector('#submitButton');
+const actionButtons = Array.from(form.querySelectorAll('button[name="action"]'));
 const avatarSubmitButton = document.querySelector('#avatarSubmitButton');
 const newChatButton = document.querySelector('#newChatButton');
+const myAgentsButton = document.querySelector('#myAgentsButton');
+const agentModal = document.querySelector('#agentModal');
+const closeAgentModal = document.querySelector('#closeAgentModal');
 const categorySelect = form.querySelector('select[name="category"]');
 const customCategoryField = document.querySelector('#customCategoryField');
 const customCategoryInput = form.querySelector('input[name="customCategory"]');
@@ -23,6 +28,10 @@ const moduleTitle = document.querySelector('#moduleTitle');
 const historyKey = 'another-me-agent-launch-history';
 let conversations = JSON.parse(localStorage.getItem(historyKey) || '[]');
 let activeConversationId = conversations[0]?.id || crypto.randomUUID();
+let activeAgentId = localStorage.getItem('another-me-active-agent-id') || '';
+let activeAgentName = localStorage.getItem('another-me-active-agent-name') || '';
+let currentMcp = JSON.parse(localStorage.getItem('another-me-current-mcp') || 'null');
+let agents = [];
 
 const saveHistory = () => localStorage.setItem(historyKey, JSON.stringify(conversations.slice(0, 40)));
 
@@ -66,6 +75,56 @@ const renderHistory = () => {
   }));
 };
 
+const agentStatusLabel = (status) => {
+  if (status === 'published') return '已发布';
+  if (status === 'draft') return '草稿';
+  return '测试中';
+};
+
+const loadAgents = async () => {
+  const response = await fetch('/api/module-agent-launch/agents');
+  agents = await response.json().catch(() => []);
+  if (!Array.isArray(agents)) agents = [];
+  renderAgents();
+};
+
+const selectAgent = (agent) => {
+  const displayName = agent.name || '未命名';
+  activeAgentId = agent.id;
+  activeAgentName = displayName;
+  localStorage.setItem('another-me-active-agent-id', activeAgentId);
+  localStorage.setItem('another-me-active-agent-name', activeAgentName);
+  setStatus(chatStatusNode, `当前测试对象：${displayName}`, 'ok');
+  setStatus(statusNode, `已选中 ${displayName}。中间对话会使用这个 Agent。`, 'ok');
+};
+
+const renderAgents = () => {
+  const createAgentButton = (agent) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'history-item';
+    button.innerHTML = `<strong></strong><span></span>`;
+    const displayName = agent.name || '未命名';
+    button.querySelector('strong').textContent = displayName;
+    button.querySelector('span').textContent = `${agentStatusLabel(agent.status)} · ${agent.tagline || agent.category || '未填写简介'}`;
+    button.addEventListener('click', () => {
+      selectAgent(agent);
+      agentModal.hidden = true;
+    });
+    return button;
+  };
+  const drafts = agents.filter((agent) => agent.status !== 'published');
+  const published = agents.filter((agent) => agent.status === 'published');
+  const emptyDraft = document.createElement('div');
+  emptyDraft.className = 'empty-list';
+  emptyDraft.textContent = '暂无草稿';
+  const emptyPublished = document.createElement('div');
+  emptyPublished.className = 'empty-list';
+  emptyPublished.textContent = '暂无已发布';
+  draftAgentList.replaceChildren(...(drafts.length ? drafts.map(createAgentButton) : [emptyDraft]));
+  publishedAgentList.replaceChildren(...(published.length ? published.map(createAgentButton) : [emptyPublished]));
+};
+
 const renderMessages = () => {
   const conversation = conversations.find((item) => item.id === activeConversationId);
   messages.replaceChildren();
@@ -96,11 +155,21 @@ const addMessage = (role, text, persist = true) => {
   return item;
 };
 
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.addEventListener('load', () => {
+    const value = String(reader.result || '');
+    resolve(value.includes(',') ? value.split(',').pop() : value);
+  });
+  reader.addEventListener('error', () => reject(reader.error || new Error('文件读取失败')));
+  reader.readAsDataURL(file);
+});
+
 const askRuntime = async (message) => {
   const response = await fetch('/api/module-agent-launch/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, agentId: activeAgentId }),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
@@ -110,6 +179,17 @@ const askRuntime = async (message) => {
 const publishAgent = async (agent) => {
   const response = await fetch('/api/module-agent-launch/agents', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(agent),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+  return result;
+};
+
+const updateAgent = async (agentId, agent) => {
+  const response = await fetch(`/api/module-agent-launch/agents/${encodeURIComponent(agentId)}`, {
+    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(agent),
   });
@@ -175,7 +255,34 @@ const openModule = (name) => {
 categorySelect.addEventListener('change', syncCustomCategory);
 syncCustomCategory();
 
-historySearch.addEventListener('input', renderHistory);
+historySearch.addEventListener('input', () => {
+  renderHistory();
+});
+
+myAgentsButton.addEventListener('click', async () => {
+  await loadAgents();
+  agentModal.hidden = false;
+});
+
+const initialAgentId = new URLSearchParams(window.location.search).get('agentId');
+if (initialAgentId) {
+  loadAgents().then(() => {
+    const agent = agents.find((item) => item.id === initialAgentId);
+    if (agent) selectAgent(agent);
+  });
+}
+
+closeAgentModal.addEventListener('click', () => {
+  agentModal.hidden = true;
+});
+
+agentModal.addEventListener('click', (event) => {
+  if (event.target.matches('[data-close-agent-modal]')) agentModal.hidden = true;
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') agentModal.hidden = true;
+});
 
 newChatButton.addEventListener('click', () => {
   activeConversationId = crypto.randomUUID();
@@ -228,12 +335,15 @@ chatForm.addEventListener('submit', async (event) => {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  submitButton.disabled = true;
-  setStatus(statusNode, '正在读取 Agent 文件...');
+  const action = event.submitter?.value || 'update';
+  actionButtons.forEach((button) => { button.disabled = true; });
+  setStatus(statusNode, action === 'publish' ? '正在发布 Agent...' : action === 'draft' ? '正在保存草稿...' : '正在更新 Agent...');
   try {
     const values = Object.fromEntries(new FormData(form).entries());
     const skillZip = values.skillZip;
-    if (!skillZip || !skillZip.name || !skillZip.name.toLowerCase().endsWith('.zip')) {
+    const hasSkillZip = Boolean(skillZip && skillZip.name);
+    const isDraft = action === 'draft';
+    if (hasSkillZip && !skillZip.name.toLowerCase().endsWith('.zip')) {
       throw new Error('请上传正确格式的 Agent 文件');
     }
     const demoVideo = values.demoVideo;
@@ -241,49 +351,77 @@ form.addEventListener('submit', async (event) => {
       ? [`视频 Demo 文件：${demoVideo.name}`, `视频 Demo 大小：${Math.ceil(demoVideo.size / 1024)} KB`]
       : [];
     const category = values.category === '其他' ? String(values.customCategory || '').trim() : values.category;
-    if (!category) throw new Error('请填写具体赛道');
+    if (!isDraft && !category) throw new Error('请填写具体赛道');
     const description = [
       values.description,
-      `技能包文件：${skillZip.name}`,
-      `技能包大小：${Math.ceil(skillZip.size / 1024)} KB`,
+      hasSkillZip ? `技能包文件：${skillZip.name}` : `技能包文件：沿用当前已接入的 ${activeAgentName || 'Agent'}`,
+      hasSkillZip ? `技能包大小：${Math.ceil(skillZip.size / 1024)} KB` : '',
       ...demoVideoNote,
-      '运行方式：后续由 Another Me 解压 skill zip，并通过固定系统提示词接入 LLM。',
-    ].join('\n\n');
-    const result = await publishAgent({
-      name: values.name,
-      owner: values.owner,
+      '运行方式：Another Me 会解压 skill zip，并把解压出的 skill 内容与这里填写的文字描述一起接入对话。',
+    ].filter(Boolean).join('\n\n');
+    const skillZipBase64 = hasSkillZip ? await fileToBase64(skillZip) : '';
+    const status = action === 'publish' ? 'published' : action === 'draft' ? 'draft' : 'testing';
+    if (action === 'publish' && (!values.owner || !values.description)) {
+      throw new Error('发布前请填写上传者和详细简介');
+    }
+    const agentName = String(values.name || '').trim() || '未命名';
+    const profileText = String(values.description || '').trim() || '未填写画像';
+    const payload = {
+      name: agentName,
+      owner: values.owner || (isDraft ? '未填写' : ''),
       tagline: values.tagline,
       description,
       skillPrompt: [
-        `# Uploaded Agent Skill: ${values.name}`,
+        `# Uploaded Agent Skill: ${agentName || 'Unnamed Agent'}`,
         '',
-        values.description,
+        profileText,
         '',
-        `Skill package: ${skillZip.name}`,
+        hasSkillZip ? `Skill package: ${skillZip.name}` : 'Skill package: none. Use the written profile as the agent behavior.',
         `Category: ${category}`,
-        'Instruction: behave according to the uploaded skill package. The real zip extraction step is reserved for Another Me.',
-      ].join('\n'),
+        'Instruction: use both the uploaded skill package and the written description when a skill exists. If no skill exists, the written description is the full agent profile.',
+      ].filter(Boolean).join('\n'),
+      skillZipName: hasSkillZip ? skillZip.name : '',
+      skillZipBase64,
       runtimeType: 'another-me-skill-runtime',
-      chatUrl: `https://example.com/skill-agent/${encodeURIComponent(values.name)}`,
+      chatUrl: `https://example.com/skill-agent/${encodeURIComponent(agentName || 'unnamed')}`,
       apiUrl: '',
       repoUrl: '',
       demoVideoUrl: '',
       eventName: '',
       category,
-    });
+      status,
+      mcpConfig: currentMcp,
+    };
+    const result = activeAgentId ? await updateAgent(activeAgentId, payload) : await publishAgent(payload);
+    activeAgentId = result.id;
+    activeAgentName = result.name;
+    localStorage.setItem('another-me-active-agent-id', activeAgentId);
+    localStorage.setItem('another-me-active-agent-name', activeAgentName);
     form.reset();
     syncCustomCategory();
-    setStatus(statusNode, `已记录 ${result.name}。真实解析和 LLM 接入位置已预留。`, 'ok');
+    await loadAgents();
+    const verb = action === 'publish' ? '已发布' : action === 'draft' ? '已存为草稿' : '已更新';
+    setStatus(statusNode, `${verb} ${result.name}。可以在中间对话框继续测试，发现问题后再更新。`, 'ok');
+    setStatus(chatStatusNode, `当前测试对象：${result.name}`, 'ok');
   } catch (error) {
-    setStatus(statusNode, `上传失败：${error.message}`, 'error');
+    setStatus(statusNode, `操作失败：${error.message}`, 'error');
   } finally {
-    submitButton.disabled = false;
+    actionButtons.forEach((button) => { button.disabled = false; });
   }
 });
 
 document.querySelector('#mcpForm').addEventListener('submit', (event) => {
   event.preventDefault();
-  setStatus(mcpStatusNode, 'MCP 配置已暂存。Another Me 接入位置已预留。', 'ok');
+  const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+  currentMcp = {
+    name: String(values.mcpName || '').trim(),
+    endpoint: String(values.mcpEndpoint || '').trim(),
+    purpose: String(values.mcpPurpose || '').trim(),
+  };
+  const hasMcp = currentMcp.name || currentMcp.endpoint || currentMcp.purpose;
+  if (!hasMcp) currentMcp = null;
+  localStorage.setItem('another-me-current-mcp', JSON.stringify(currentMcp));
+  setStatus(mcpStatusNode, currentMcp ? 'MCP 配置已暂存，会随当前 Agent 一起保存。' : '未配置 MCP，不影响 Agent 使用。', 'ok');
   event.currentTarget.reset();
 });
 
@@ -332,3 +470,4 @@ avatarForm.addEventListener('submit', async (event) => {
 renderHistory();
 renderMessages();
 openModule('skill');
+if (!initialAgentId) loadAgents();

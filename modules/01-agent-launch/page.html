@@ -22,13 +22,14 @@
 
         <nav class="history-nav">
           <button class="history-tab active" type="button">Another Me</button>
-          <button class="history-tab" type="button">我的 Agent</button>
+          <button id="myAgentsButton" class="history-tab" type="button">我的 Agent</button>
         </nav>
 
         <div class="history-section">
           <div class="history-title">聊天</div>
           <div id="historyList" class="history-list"></div>
         </div>
+
       </aside>
 
       <section class="chat-pane">
@@ -76,13 +77,13 @@
         </div>
 
         <section id="skillModule" class="module-panel active">
-          <p class="panel-note">上传你的 Agent。系统会把 skill 作为运行时指令交给 Another Me。</p>
+          <p class="panel-note">可以只用详细简介创建 Agent，也可以上传 skill zip 增强能力。每次更新右侧内容后，中间对话框都会切到最新 Agent。</p>
           <form id="agentForm">
-            <label>Agent 名称 <input name="name" required placeholder="Research Buddy" /></label>
-            <label>上传者 / 团队 <input name="owner" required placeholder="Alex / Team name" /></label>
+            <label>Agent 名称 <input name="name" placeholder="Research Buddy" /></label>
+            <label>上传者 / 团队 <input name="owner" placeholder="Alex / Team name" /></label>
             <label>一句话介绍 <input name="tagline" placeholder="查找论文并起草回答" /></label>
-            <label>详细简介 <textarea name="description" rows="4" required placeholder="说明这个 Agent 能做什么，以及其他用户应该如何使用。"></textarea></label>
-            <label>上传你的 skill 压缩包 <input name="skillZip" type="file" accept=".zip,application/zip,application/x-zip-compressed" required /></label>
+            <label>详细简介 <textarea name="description" rows="4" placeholder="说明这个 Agent 能做什么、如何回答、边界是什么。更新这里会立刻细化当前 Agent。"></textarea></label>
+            <label>上传你的 skill 压缩包 <input name="skillZip" type="file" accept=".zip,application/zip,application/x-zip-compressed" /></label>
             <label>上传视频 Demo（可选） <input name="demoVideo" type="file" accept="video/*" /></label>
             <label>赛道
               <select name="category">
@@ -96,8 +97,12 @@
               </select>
             </label>
             <label id="customCategoryField" hidden>具体赛道 <input name="customCategory" placeholder="请输入你的具体赛道" /></label>
-            <button id="submitButton" type="submit">上传并发布 Agent</button>
-            <div id="status" class="status">等待上传你的 Agent。</div>
+            <div class="form-actions">
+              <button id="updateButton" name="action" value="update" type="submit">更新</button>
+              <button id="draftButton" name="action" value="draft" type="submit">存为草稿</button>
+              <button id="publishButton" name="action" value="publish" type="submit">发布</button>
+            </div>
+            <div id="status" class="status">上传 skill，或只修改详细简介等文字描述来更新当前 Agent。</div>
           </form>
         </section>
 
@@ -212,6 +217,28 @@
         </section>
       </aside>
     </main>
+    <div id="agentModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-agent-modal></div>
+      <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="agentModalTitle">
+        <header class="modal-header">
+          <div>
+            <div class="section-kicker">我的 Agent</div>
+            <h2 id="agentModalTitle">草稿 / 已发布</h2>
+          </div>
+          <button id="closeAgentModal" class="icon-button" type="button" title="关闭">×</button>
+        </header>
+        <div class="agent-columns">
+          <section class="agent-column">
+            <h3>草稿</h3>
+            <div id="draftAgentList" class="history-list modal-list"></div>
+          </section>
+          <section class="agent-column">
+            <h3>已发布</h3>
+            <div id="publishedAgentList" class="history-list modal-list"></div>
+          </section>
+        </div>
+      </section>
+    </div>
     <script src="/module-parts/01-agent-launch/page.js"></script>
   </body>
 </html>

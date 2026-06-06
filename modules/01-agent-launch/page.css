@@ -376,6 +376,17 @@ form {
   gap: 14px;
 }
 
+.form-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.form-actions button {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -406,6 +417,76 @@ textarea { resize: vertical; }
 .status.error { color: var(--red); }
 .status.ok { color: var(--green); }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.36);
+}
+
+.modal-panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 16px;
+  width: min(680px, 100%);
+  max-height: min(720px, calc(100vh - 44px));
+  overflow: auto;
+  border: 3px solid var(--line);
+  padding: 18px;
+  background: #fff;
+  box-shadow: 8px 8px 0 var(--line);
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.modal-list {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.agent-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.agent-column {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agent-column h3 {
+  margin: 0;
+  border: 2px solid var(--line);
+  padding: 8px 10px;
+  background: var(--yellow);
+  font-size: 13px;
+}
+
+.empty-list {
+  border: 2px dashed var(--line);
+  padding: 14px;
+  color: var(--muted);
+  background: var(--soft);
+  font-size: 12px;
+}
+
 @media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 220px minmax(0, 1fr);
@@ -435,5 +516,9 @@ textarea { resize: vertical; }
 
   .message {
     max-width: 100%;
+  }
+
+  .agent-columns {
+    grid-template-columns: 1fr;
   }
 }
