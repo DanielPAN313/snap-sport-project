@@ -696,6 +696,11 @@ button {
   background: #fff;
 }
 
+.small-btn {
+  min-height: 34px;
+  padding: 8px 12px;
+}
+
 .danger-btn {
   color: #fff;
   background: var(--red);
@@ -1204,6 +1209,44 @@ button {
   box-shadow: var(--shadow);
 }
 
+.payment-sheet {
+  width: min(720px, 100%);
+  max-height: min(88vh, 820px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.payment-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.payment-hero h4 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+
+.payment-hero p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.payment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .game-detail-hero,
 .join-summary {
   display: grid;
@@ -1284,6 +1327,11 @@ button {
   background: #f8faf6;
 }
 
+.warning-block {
+  border-color: rgba(240, 122, 50, 0.28);
+  background: #fff5eb;
+}
+
 .panel-soft-block strong {
   display: block;
   margin-bottom: 6px;
@@ -1351,6 +1399,46 @@ button {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.message-side {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.funnel-list {
+  display: grid;
+  gap: 10px;
+}
+
+.funnel-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.funnel-bar {
+  overflow: hidden;
+  height: 12px;
+  border-radius: 999px;
+  background: #e8efe4;
+}
+
+.funnel-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green), var(--lime));
+}
+
+.funnel-row strong {
+  color: var(--ink);
+  text-align: right;
 }
 
 .game-card p {
@@ -1466,13 +1554,17 @@ th {
 
 .compact-order {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   align-items: center;
   gap: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
   background: var(--panel-soft);
+}
+
+.compact-order .small-btn {
+  flex: 0 0 auto;
 }
 
 .compact-order strong,

@@ -18,12 +18,14 @@
       teams: [],
       clips: [],
       uploads: [],
+      notifications: [],
     },
     reviewDetail: null,
     playerProfile: null,
     gameDetail: null,
     joinConfirm: null,
     venueBooking: null,
+    paymentConfirm: null,
     toast: '',
   };
 
@@ -53,6 +55,13 @@
       throw new Error(data.error || '请求失败');
     }
     return data;
+  }
+
+  function track(eventName, payload) {
+    api('/api/sports-app/track', {
+      method: 'POST',
+      body: JSON.stringify(Object.assign({ event_name: eventName }, payload || {})),
+    }).catch(function () {});
   }
 
   function money(value) {
@@ -96,11 +105,18 @@
       pending: '待审核',
       rejected: '未通过',
       paid: '已支付',
+      pending_payment: '待支付',
+      pending_checkin: '待核销',
       checked_in: '已核销',
       open: '报名中',
+      forming: '待成局',
+      locked: '已锁局',
+      review_open: '待互评',
+      completed: '已完成',
       active: '活跃',
       queued: '排队中',
       submitted: '已提交',
+      refunded: '已退款',
       cancelled: '已取消',
     }[status] || status;
   }
@@ -149,6 +165,21 @@
       effective_peer_games: 0,
       peer_rating_count: 0,
     };
+  }
+
+  function creditScore() {
+    return Number((state.data.me || {}).credit_score || 100);
+  }
+
+  function creditLocked() {
+    return creditScore() < 80;
+  }
+
+  function orderStatusClass(status) {
+    if (status === 'checked_in' || status === 'completed') return '';
+    if (status === 'pending_payment' || status === 'pending_checkin' || status === 'open' || status === 'forming') return 'orange';
+    if (status === 'cancelled' || status === 'refunded') return 'gray';
+    return 'blue';
   }
 
   function guideSeen() {
@@ -213,6 +244,7 @@
     state.data.teams = data.teams || [];
     state.data.clips = data.clips || [];
     state.data.uploads = data.uploads || [];
+    state.data.notifications = data.notifications || [];
   }
 
   async function loadOrders() {
@@ -487,7 +519,7 @@
       '<article class="game-card">',
       '  <div class="date-chip"><strong>' + h(date.day) + '</strong><span>' + h(date.month) + '</span></div>',
       '  <div>',
-      '    <div class="item-head"><h4>' + h(game.title) + '</h4><div class="tag-row">' + (isMatch ? '<span class="tag orange">实力匹配</span>' : '') + '<span class="tag blue">' + sportLabel(game.sport) + '</span></div></div>',
+      '    <div class="item-head"><h4>' + h(game.title) + '</h4><div class="tag-row">' + (isMatch ? '<span class="tag orange">实力匹配</span>' : '') + '<span class="tag ' + orderStatusClass(game.status) + '">' + statusLabel(game.status) + '</span><span class="tag blue">' + sportLabel(game.sport) + '</span></div></div>',
       '    <p>' + h(game.venue_name) + ' / ' + h(game.area) + ' / ' + fmtDate(game.start_time) + '</p>',
       '    <p>' + h(game.notes) + '</p>',
       '    <div class="item-meta"><span>已报名 ' + h(game.joined_count) + '/' + h(game.capacity) + ' 人</span><span>当前球局平均实力 ' + oneDecimal(averageRating, 3) + ' 分</span><div class="progress"><span style="width:' + percent + '%"></span></div></div>',
@@ -498,7 +530,7 @@
       '  <div style="min-width:128px;text-align:right">',
       '    <strong class="price">' + money(game.fee_per_person) + '</strong>',
       '    <button class="secondary-btn" type="button" data-game-detail="' + h(game.id) + '">详情</button>',
-      '    <button class="' + (game.is_joined ? 'secondary-btn' : 'primary-btn') + '" type="button" data-open-join="' + h(game.id) + '"' + (game.is_joined ? ' disabled' : '') + '>' + (game.is_joined ? '已报名' : '报名支付') + '</button>',
+      '    <button class="' + (game.is_joined || creditLocked() ? 'secondary-btn' : 'primary-btn') + '" type="button" data-open-join="' + h(game.id) + '"' + (game.is_joined || creditLocked() || !['forming', 'open'].includes(game.status) ? ' disabled' : '') + '>' + (game.is_joined ? '已报名' : creditLocked() ? '信用受限' : '报名支付') + '</button>',
       '    <button class="secondary-btn review-btn" type="button" data-review-game="' + h(game.id) + '">赛后互评</button>',
       '  </div>',
       '</article>',
@@ -525,6 +557,7 @@
       state.playerProfile ? playerProfileModal(state.playerProfile) : '',
       state.gameDetail ? gameDetailPanel(state.gameDetail) : '',
       state.joinConfirm ? joinConfirmPanel(state.joinConfirm) : '',
+      state.paymentConfirm ? paymentPanel(state.paymentConfirm) : '',
     ].join('');
   }
 
@@ -560,6 +593,7 @@
   }
 
   function joinConfirmPanel(game) {
+    var locked = creditLocked();
     return [
       '<div class="modal-backdrop" data-close-join-confirm>',
       '  <section class="join-confirm-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
@@ -572,10 +606,36 @@
       metric('报名费用', money(game.fee_per_person)),
       metric('当前人数', h(game.joined_count || 0) + '/' + h(game.capacity || 0)),
       metric('平均实力', oneDecimal(game.average_rating, 3) + '分'),
-      metric('信用要求', '正常'),
+      metric('信用要求', locked ? '受限' : '正常'),
       '    </div>',
+      locked ? '    <div class="panel-soft-block warning-block"><strong>信用分不足</strong><p>当前信用分 ' + h(creditScore()) + '，低于 80 分时暂不能报名、订场或发局。</p></div>' : '',
       '    <label class="check-row"><input type="checkbox" checked disabled /> 我确认按时到场，若爽约将影响信用分</label>',
-      '    <button class="primary-btn" type="button" data-join-game="' + h(game.id) + '">确认并支付</button>',
+      '    <button class="primary-btn" type="button" data-join-game="' + h(game.id) + '"' + (locked ? ' disabled' : '') + '>确认报名，生成待支付订单</button>',
+      '  </section>',
+      '</div>',
+    ].join('');
+  }
+
+  function paymentPanel(order) {
+    return [
+      '<div class="modal-backdrop" data-close-payment>',
+      '  <section class="payment-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
+      '    <div class="panel-title"><h3>支付确认</h3><button class="secondary-btn" type="button" data-close-payment>关闭</button></div>',
+      '    <div class="payment-hero">',
+      '      <div><span class="tag orange">' + statusLabel(order.status || 'pending_payment') + '</span><h4>' + h(order.title || '场地预订') + '</h4><p>' + h(order.venue_name || order.venue || '合作场馆') + '</p></div>',
+      '      <div class="order-code"><span>应付金额</span><strong>' + money(order.amount) + '</strong></div>',
+      '    </div>',
+      '    <div class="detail-grid">',
+      metric('订单号', '#' + h(order.order_id || order.id)),
+      metric('支付方式', '微信支付'),
+      metric('订单状态', statusLabel(order.status || 'pending_payment')),
+      metric('信用分', creditScore()),
+      '    </div>',
+      '    <div class="panel-soft-block"><strong>演示支付说明</strong><p>点击下方按钮后，系统会把订单状态更新为已支付；球局报名会在支付成功后正式占位并生成核销码。</p></div>',
+      '    <div class="payment-actions">',
+      '      <button class="secondary-btn" type="button" data-cancel-order="' + h(order.order_id || order.id) + '">取消订单</button>',
+      '      <button class="primary-btn" type="button" data-pay-order="' + h(order.order_id || order.id) + '">模拟微信支付</button>',
+      '    </div>',
       '  </section>',
       '</div>',
     ].join('');
@@ -763,7 +823,7 @@
       '<section class="section">',
       '  <div class="panel-title"><h3>消息中心</h3><span>报名、核销、互评提醒</span></div>',
       messages.length ? '<div class="message-list">' + messages.map(function (item) {
-        return '<article class="message-card"><div><strong>' + h(item.title) + '</strong><p>' + h(item.body) + '</p></div><span>' + h(item.time) + '</span></article>';
+        return '<article class="message-card"><div><strong>' + h(item.title) + '</strong><p>' + h(item.body) + '</p></div><div class="message-side"><span>' + h(item.time) + '</span>' + (item.status === 'unread' ? '<button class="secondary-btn small-btn" type="button" data-read-notification="' + h(item.id) + '">已读</button>' : '<span class="tag gray">已读</span>') + '</div></article>';
       }).join('') + '</div>' : '<div class="empty">暂无消息</div>',
       '</section>',
     ].join('');
@@ -905,23 +965,73 @@
       '      <button type="button" data-jump-view="data">6. 提交运动档案</button>',
       '    </div>',
       '    <div class="panel-soft-block"><strong>当前账号</strong><p>' + h((session() || {}).username || (session() || {}).name || 'demo_player') + ' / 信用分 ' + h(me.credit_score || 100) + '。这条路径覆盖主闭环，并保留后续能力入口。</p></div>',
+      creditLocked() ? '    <div class="panel-soft-block warning-block"><strong>信用分受限</strong><p>当前分数低于 80，报名、订场和发局入口会被拦截。</p></div>' : '',
       '  </div>',
       '</section>',
     ].join('');
   }
 
   function notificationList() {
+    var persisted = (state.data.notifications || []).map(function (item) {
+      return {
+        id: item.id,
+        title: item.title,
+        body: item.body,
+        time: fmtDate(item.create_time),
+        status: item.status,
+        order_id: item.related_order_id,
+      };
+    });
     var orders = state.data.myOrders || [];
     var rating = ratingSummary();
-    var messages = [];
+    var messages = persisted.slice();
+    var pendingOrder = orders.find(function (order) { return order.status === 'pending_payment'; });
+    if (pendingOrder) {
+      messages.push({
+        title: '你有一笔订单待支付',
+        body: (pendingOrder.title || '场地预订') + ' / 应付 ' + money(pendingOrder.amount) + '，支付后才会正式生效。',
+        time: fmtDate(pendingOrder.create_time),
+        order_id: pendingOrder.id,
+      });
+    }
     if (orders.length) {
       var latest = orders[0];
       messages.push({
-        title: '最新报名记录',
-        body: (latest.title || '球局报名') + ' / ' + (latest.checkin_code ? '核销码 ' + latest.checkin_code : '等待支付记录'),
+        title: latest.status === 'paid' ? '支付成功，等待核销' : latest.status === 'checked_in' ? '订单已核销' : '最新订单记录',
+        body: (latest.title || '场地预订') + ' / ' + statusLabel(latest.status) + (latest.checkin_code ? ' / 核销码 ' + latest.checkin_code : ''),
         time: fmtDate(latest.create_time || latest.start_time),
       });
     }
+    (state.data.games || []).forEach(function (game) {
+      if (game.is_joined && game.status === 'locked') {
+        messages.push({
+          title: '球局已锁局',
+          body: (game.title || '附近球局') + ' 已满员锁局，请按时到场。',
+          time: fmtDate(game.start_time),
+        });
+      }
+      if (game.is_joined && game.status === 'pending_checkin') {
+        messages.push({
+          title: '开赛提醒',
+          body: (game.title || '附近球局') + ' 即将开始，请到场后完成核销。',
+          time: fmtDate(game.start_time),
+        });
+      }
+      if (game.is_joined && game.status === 'review_open') {
+        messages.push({
+          title: '赛后互评已开启',
+          body: (game.title || '附近球局') + ' 结束后 24 小时内可完成互评。',
+          time: fmtDate(game.end_time),
+        });
+      }
+    });
+    (state.data.clips || []).forEach(function (clip) {
+      messages.push({
+        title: '集锦任务已生成',
+        body: (clip.game_title || '比赛高光') + ' / ' + (clip.demo_result || '等待处理'),
+        time: fmtDate(clip.create_time),
+      });
+    });
     if (Number(rating.effective_peer_games || 0) > 0) {
       messages.push({
         title: '实力评级已更新',
@@ -929,7 +1039,7 @@
         time: fmtDate(rating.update_time),
       });
     }
-    return messages;
+    return messages.slice(0, 80);
   }
 
   function myOrderList(orders) {
@@ -937,6 +1047,8 @@
     return [
       '<div class="compact-list">',
       orders.map(function (order) {
+        var canPay = order.status === 'pending_payment';
+        var canCheckin = order.status === 'paid';
         return [
           '<article class="compact-order">',
           '  <div>',
@@ -947,8 +1059,10 @@
           '    <span>核销码</span>',
           '    <strong>' + h(order.checkin_code) + '</strong>',
           '  </div>',
-          order.game_id ? '<button class="secondary-btn" type="button" data-review-game="' + h(order.game_id) + '">去互评</button>' : '',
-          '  <span class="tag ' + (order.status === 'checked_in' ? '' : 'orange') + '">' + statusLabel(order.status) + '</span>',
+          canPay ? '<button class="primary-btn small-btn" type="button" data-open-payment="' + h(order.id) + '">去支付</button>' : '',
+          canCheckin ? '<button class="secondary-btn small-btn" type="button" data-checkin-order="' + h(order.id) + '">去核销</button>' : '',
+          order.game_id ? '<button class="secondary-btn small-btn" type="button" data-review-game="' + h(order.game_id) + '">去互评</button>' : '',
+          '  <span class="tag ' + orderStatusClass(order.status) + '">' + statusLabel(order.status) + '</span>',
           '</article>',
         ].join('');
       }).join(''),
@@ -1044,7 +1158,7 @@
     var metrics = state.data.metrics || {};
     return [
       '<section class="section">',
-      '  <div class="panel-title"><h3>数据看板</h3><span>上线 10 天 KPI 复盘</span></div>',
+      '  <div class="panel-title"><h3>数据看板</h3><span>上线 10 天 KPI 复盘</span><button class="secondary-btn small-btn" type="button" data-demo-reset>重置演示账号</button></div>',
       '  <div class="metric-grid">',
       metric('今日订单', metrics.today_orders || 0),
       metric('今日收入', money(metrics.today_income || 0)),
@@ -1053,6 +1167,10 @@
       metric('合作场馆', metrics.approved_venues || 0),
       metric('订单金额', money(metrics.gmv || 0)),
       '  </div>',
+      '</section>',
+      '<section class="section panel">',
+      '  <div class="panel-title"><h3>转化漏斗</h3><span>近 7 天核心行为埋点</span></div>',
+      funnelPanel(metrics.funnel || []),
       '</section>',
       '<section class="section panel">',
       '  <div class="panel-title"><h3>场馆审核</h3><span>保证样板区质量</span></div>',
@@ -1067,6 +1185,19 @@
       ratingAdminTable(),
       '</section>',
     ].join('');
+  }
+
+  function funnelPanel(rows) {
+    if (!rows.length) return '<div class="empty">暂无埋点数据。访问首页、订场、报名、支付后会自动生成漏斗。</div>';
+    return '<div class="funnel-list">' + rows.map(function (item) {
+      return [
+        '<div class="funnel-row">',
+        '  <span>' + h(item.label) + '</span>',
+        '  <div class="funnel-bar"><i style="width:' + h(item.rate || 0) + '%"></i></div>',
+        '  <strong>' + h(item.count || 0) + '</strong>',
+        '</div>',
+      ].join('');
+    }).join('') + '</div>';
   }
 
   function adminVenueTable() {
@@ -1163,6 +1294,9 @@
         if (projectFilter) state.sportFilter = projectFilter;
         state.userView = button.getAttribute('data-user-view') || button.getAttribute('data-jump-view');
         state.mode = 'user';
+        if (state.userView === 'home') track('home_view');
+        if (state.userView === 'venues') track('venue_list_view');
+        if (state.userView === 'games') track('game_list_view');
         render();
       });
     });
@@ -1188,8 +1322,15 @@
         try {
           var result = await api('/api/sports-app/games/' + gameId + '/join', { method: 'POST', body: '{}' });
           state.joinConfirm = null;
+          var game = (state.data.games || []).find(function (item) { return String(item.id) === String(gameId); }) || {};
+          state.paymentConfirm = Object.assign({}, result, {
+            title: game.title || '球局报名',
+            venue_name: game.venue_name || '合作场馆',
+            amount: game.fee_per_person || 0,
+          });
           await loadBootstrap();
-          showToast('报名成功，微信支付占位已记账，核销码 ' + result.checkin_code);
+          render();
+          showToast('待支付订单已生成，请完成支付');
         } catch (error) {
           showToast(error.message);
         }
@@ -1208,6 +1349,80 @@
       node.addEventListener('click', function () {
         state.joinConfirm = null;
         render();
+      });
+    });
+
+    app.querySelectorAll('[data-close-payment]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        state.paymentConfirm = null;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-open-payment]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var order = (state.data.myOrders || state.data.orders || []).find(function (item) {
+          return String(item.id) === String(button.getAttribute('data-open-payment'));
+        });
+        if (!order) return;
+        state.paymentConfirm = Object.assign({ order_id: order.id }, order);
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-pay-order]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        button.disabled = true;
+        try {
+          var result = await api('/api/sports-app/orders/' + button.getAttribute('data-pay-order') + '/pay', { method: 'POST', body: '{}' });
+          state.paymentConfirm = null;
+          await loadBootstrap();
+          showToast('支付成功，核销码 ' + result.checkin_code);
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+    });
+
+    app.querySelectorAll('[data-cancel-order]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        if (!window.confirm('确认取消这笔订单？已支付订单在允许时间内会退款，超时需联系运营。')) return;
+        button.disabled = true;
+        try {
+          await api('/api/sports-app/orders/' + button.getAttribute('data-cancel-order') + '/cancel', { method: 'POST', body: '{}' });
+          state.paymentConfirm = null;
+          await loadBootstrap();
+          showToast('订单已取消');
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+    });
+
+    app.querySelectorAll('[data-read-notification]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        try {
+          await api('/api/sports-app/notifications/' + button.getAttribute('data-read-notification') + '/read', { method: 'POST', body: '{}' });
+          await loadBootstrap();
+          render();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+    });
+
+    app.querySelectorAll('[data-demo-reset]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        if (!window.confirm('确认重置演示账号？将恢复信用分并清理待支付订单。')) return;
+        try {
+          await api('/api/sports-app/admin/demo-reset', { method: 'POST', body: '{}' });
+          await loadBootstrap();
+          if (state.mode === 'admin') await refreshModeData();
+          render();
+          showToast('演示账号已重置');
+        } catch (error) {
+          showToast(error.message);
+        }
       });
     });
 
@@ -1240,6 +1455,7 @@
     app.querySelectorAll('[data-open-venue-book]').forEach(function (button) {
       button.addEventListener('click', function () {
         state.venueBooking = state.data.venues.find(function (venue) { return String(venue.id) === String(button.getAttribute('data-open-venue-book')); }) || null;
+        track('venue_book_open', { entity_type: 'venue', entity_id: button.getAttribute('data-open-venue-book') });
         render();
       });
     });
@@ -1292,6 +1508,7 @@
           showToast('请选择一个可用时段');
           return;
         }
+        var bookedVenue = state.venueBooking;
         if (!window.confirm('确认提交场地预订？')) return;
         try {
           var result = await api('/api/sports-app/venues/' + state.venueBooking.id + '/book', {
@@ -1304,7 +1521,18 @@
           });
           state.venueBooking = null;
           await loadBootstrap();
-          showToast('场地预订成功，' + (result.booking_range || '') + '，核销码 ' + result.checkin_code);
+          var bookedOrder = (state.data.myOrders || state.data.orders || []).find(function (order) {
+            return String(order.checkin_code) === String(result.checkin_code);
+          }) || result;
+          state.paymentConfirm = Object.assign({}, bookedOrder, {
+            title: '场地预订',
+            venue_name: bookedVenue ? bookedVenue.name : '合作场馆',
+            amount: result.amount || 0,
+            order_id: result.order_id,
+            status: 'pending_payment',
+          });
+          render();
+          showToast('场地订单已生成，请完成支付');
         } catch (error) {
           showToast(error.message);
         }

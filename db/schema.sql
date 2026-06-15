@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS `sports_order` (
   `checkin_code` VARCHAR(30) NOT NULL,
   `booking_start_time` DATETIME NULL,
   `booking_end_time` DATETIME NULL,
+  `paid_at` DATETIME NULL,
+  `cancelled_at` DATETIME NULL,
   `checked_in_at` DATETIME NULL,
   `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -98,6 +100,38 @@ CREATE TABLE IF NOT EXISTS `sports_credit_event` (
   PRIMARY KEY (`id`),
   KEY `idx_sports_credit_user` (`user_id`),
   KEY `idx_sports_credit_game` (`related_game_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `sports_notification` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` INT UNSIGNED NOT NULL,
+  `username` VARCHAR(50) NOT NULL,
+  `type` VARCHAR(40) NOT NULL DEFAULT 'system',
+  `title` VARCHAR(120) NOT NULL,
+  `body` VARCHAR(500) NOT NULL DEFAULT '',
+  `related_order_id` INT UNSIGNED NULL,
+  `related_game_id` INT UNSIGNED NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'unread',
+  `read_at` DATETIME NULL,
+  `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_sports_notification_user` (`user_id`, `status`, `create_time`),
+  KEY `idx_sports_notification_order` (`related_order_id`),
+  KEY `idx_sports_notification_game` (`related_game_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `sports_analytics_event` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` INT UNSIGNED NULL,
+  `username` VARCHAR(50) NOT NULL DEFAULT '',
+  `event_name` VARCHAR(60) NOT NULL,
+  `entity_type` VARCHAR(40) NOT NULL DEFAULT '',
+  `entity_id` INT UNSIGNED NULL,
+  `metadata_json` TEXT NULL,
+  `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_sports_analytics_event_name` (`event_name`, `create_time`),
+  KEY `idx_sports_analytics_user` (`user_id`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `sports_player_self_rating` (

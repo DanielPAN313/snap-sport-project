@@ -109,6 +109,7 @@ const publicAuthUser = (user) => ({
 
 let sportsSchemaPromise = null
 
+const CREDIT_MINIMUM = 80
 const ratingDimensions = ['technique', 'physical', 'tactics', 'defense', 'attitude']
 const ratingPresets = {
   beginner: 1,
@@ -244,10 +245,50 @@ const ensureSportsSchema = async () => {
         KEY idx_sports_credit_game (related_game_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_notification (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        type VARCHAR(40) NOT NULL DEFAULT 'system',
+        title VARCHAR(120) NOT NULL,
+        body VARCHAR(500) NOT NULL DEFAULT '',
+        related_order_id INT UNSIGNED NULL,
+        related_game_id INT UNSIGNED NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'unread',
+        read_at DATETIME NULL,
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_notification_user (user_id, status, create_time),
+        KEY idx_sports_notification_order (related_order_id),
+        KEY idx_sports_notification_game (related_game_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_analytics_event (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id INT UNSIGNED NULL,
+        username VARCHAR(50) NOT NULL DEFAULT '',
+        event_name VARCHAR(60) NOT NULL,
+        entity_type VARCHAR(40) NOT NULL DEFAULT '',
+        entity_id INT UNSIGNED NULL,
+        metadata_json TEXT NULL,
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_analytics_event_name (event_name, create_time),
+        KEY idx_sports_analytics_user (user_id, create_time)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
     await pool.execute('ALTER TABLE sports_order ADD COLUMN booking_start_time DATETIME NULL').catch((error) => {
       if (error?.code !== 'ER_DUP_FIELDNAME') throw error
     })
     await pool.execute('ALTER TABLE sports_order ADD COLUMN booking_end_time DATETIME NULL').catch((error) => {
+      if (error?.code !== 'ER_DUP_FIELDNAME') throw error
+    })
+    await pool.execute('ALTER TABLE sports_order ADD COLUMN paid_at DATETIME NULL').catch((error) => {
+      if (error?.code !== 'ER_DUP_FIELDNAME') throw error
+    })
+    await pool.execute('ALTER TABLE sports_order ADD COLUMN cancelled_at DATETIME NULL').catch((error) => {
       if (error?.code !== 'ER_DUP_FIELDNAME') throw error
     })
     await pool.execute(`
@@ -486,6 +527,37 @@ const requestUser = (req) => ({
   username: text(req.headers['x-username'] || 'demo_player', 50) || 'demo_player',
 })
 
+const userCreditScore = async (pool, userId) => {
+  const [[row]] = await pool.execute(
+    'SELECT COALESCE(SUM(score_delta), 100) AS score FROM sports_credit_event WHERE user_id = ?',
+    [userId],
+  )
+  return Number(row?.score || 100)
+}
+
+const requireGoodCredit = async (pool, user) => {
+  const credit = await userCreditScore(pool, user.id)
+  if (credit < CREDIT_MINIMUM) {
+    const error = new Error(`信用分 ${credit} 低于 ${CREDIT_MINIMUM}，暂不能发局、报名或订场。`)
+    error.statusCode = 403
+    throw error
+  }
+  return credit
+}
+
+const gameLifecycleStatus = (game, joinedCount = 0, paidCount = 0, checkedInCount = 0) => {
+  if (game.status === 'cancelled') return 'cancelled'
+  const now = Date.now()
+  const startAt = new Date(game.start_time).getTime()
+  const endAt = new Date(game.end_time).getTime()
+  if (!Number.isNaN(endAt) && now > endAt + 24 * 60 * 60 * 1000) return 'completed'
+  if (!Number.isNaN(endAt) && now >= endAt) return 'review_open'
+  if (!Number.isNaN(startAt) && now >= startAt - 30 * 60 * 1000) return checkedInCount > 0 ? 'checked_in' : 'pending_checkin'
+  if (Number(paidCount || joinedCount) >= Number(game.capacity || 0)) return 'locked'
+  if (Number(joinedCount) === 0) return 'forming'
+  return 'open'
+}
+
 const serializeVenue = (venue) => ({
   ...venue,
   lat: Number(venue.lat),
@@ -506,22 +578,134 @@ const serializeVenue = (venue) => ({
   photos: parseJsonList(venue.photos_json),
 })
 
-const serializeGame = (game) => ({
-  ...game,
-  capacity: Number(game.capacity),
-  fee_per_person: Number(game.fee_per_person),
-  joined_count: Number(game.joined_count || 0),
-  paid_count: Number(game.paid_count || 0),
-  checked_in_count: Number(game.checked_in_count || 0),
-  average_rating: game.average_rating == null ? null : Number(game.average_rating),
-  players: parseJsonList(game.players_json)
-    .filter(Boolean)
-    .map((player) => ({
-      ...player,
-      composite_score: Number(player.composite_score || 3),
-    })),
-  is_joined: Boolean(game.is_joined),
+const serializeGame = (game) => {
+  const joinedCount = Number(game.joined_count || 0)
+  const paidCount = Number(game.paid_count || 0)
+  const checkedInCount = Number(game.checked_in_count || 0)
+  return {
+    ...game,
+    status: gameLifecycleStatus(game, joinedCount, paidCount, checkedInCount),
+    raw_status: game.status,
+    capacity: Number(game.capacity),
+    fee_per_person: Number(game.fee_per_person),
+    joined_count: joinedCount,
+    paid_count: paidCount,
+    checked_in_count: checkedInCount,
+    average_rating: game.average_rating == null ? null : Number(game.average_rating),
+    players: parseJsonList(game.players_json)
+      .filter(Boolean)
+      .map((player) => ({
+        ...player,
+        composite_score: Number(player.composite_score || 3),
+      })),
+    is_joined: Boolean(game.is_joined),
+  }
+}
+
+const serializeOrder = (order) => ({
+  ...order,
+  amount: Number(order.amount || 0),
+  can_pay: order.status === 'pending_payment',
+  can_checkin: order.status === 'paid',
 })
+
+const createNotification = async (pool, user, payload) => {
+  if (!user?.id) return
+  await pool.execute(
+    `INSERT INTO sports_notification
+      (user_id, username, type, title, body, related_order_id, related_game_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      user.id,
+      user.username || '',
+      text(payload.type, 40) || 'system',
+      text(payload.title, 120),
+      text(payload.body, 500),
+      payload.order_id ? Number(payload.order_id) : null,
+      payload.game_id ? Number(payload.game_id) : null,
+    ],
+  )
+}
+
+const sportsNotificationsForUser = async (pool, user) => {
+  const [rows] = await pool.execute(
+    `SELECT *
+     FROM sports_notification
+     WHERE user_id = ?
+     ORDER BY create_time DESC
+     LIMIT 80`,
+    [user.id],
+  )
+  return rows
+}
+
+const orderPlayableStart = (order) => order.start_time || order.booking_start_time || order.create_time
+
+const canCancelOrder = (order) => {
+  if (order.status === 'pending_payment') return { ok: true, nextStatus: 'cancelled' }
+  if (order.status !== 'paid') return { ok: false, error: '订单当前状态不能取消' }
+  const startAt = new Date(orderPlayableStart(order)).getTime()
+  if (!Number.isNaN(startAt) && startAt - Date.now() < 2 * 60 * 60 * 1000) {
+    return { ok: false, error: '开赛/预订前 2 小时内暂不支持自助退款，请联系场馆或运营处理' }
+  }
+  return { ok: true, nextStatus: 'refunded' }
+}
+
+const trackEvent = async (pool, user, eventName, payload = {}) => {
+  await pool.execute(
+    `INSERT INTO sports_analytics_event
+      (user_id, username, event_name, entity_type, entity_id, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      user?.id || null,
+      user?.username || '',
+      text(eventName, 60),
+      text(payload.entity_type, 40),
+      payload.entity_id ? Number(payload.entity_id) : null,
+      JSON.stringify(payload.metadata || {}),
+    ],
+  )
+}
+
+const analyticsFunnel = async (pool) => {
+  const [events] = await pool.execute(`
+    SELECT event_name, COUNT(*) AS count
+    FROM sports_analytics_event
+    WHERE create_time >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    GROUP BY event_name
+  `)
+  const counts = Object.fromEntries(events.map((item) => [item.event_name, Number(item.count || 0)]))
+  const steps = [
+    ['访问首页', 'home_view'],
+    ['点击订场', 'venue_book_open'],
+    ['生成订单', 'order_created'],
+    ['支付成功', 'payment_success'],
+    ['发起球局', 'game_created'],
+    ['核销到场', 'checkin_success'],
+    ['提交互评', 'review_submitted'],
+    ['提交集锦', 'clip_submitted'],
+  ].map(([label, key]) => ({ label, key, count: counts[key] || 0 }))
+  const max = Math.max(1, ...steps.map((item) => item.count))
+  return steps.map((item) => ({
+    ...item,
+    rate: Math.round((item.count / max) * 100),
+  }))
+}
+
+const resetDemoAccount = async (pool, user) => {
+  await pool.execute('DELETE FROM sports_credit_event WHERE user_id = ?', [user.id])
+  await pool.execute(
+    'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note) VALUES (?, ?, "demo_reset", 100, "演示账号信用重置")',
+    [user.id, user.username],
+  )
+  await pool.execute('UPDATE sports_order SET status = "cancelled", cancelled_at = NOW() WHERE user_id = ? AND status = "pending_payment"', [user.id])
+  await pool.execute('UPDATE sports_signup SET no_show = 0 WHERE user_id = ?', [user.id])
+  await createNotification(pool, user, {
+    type: 'demo_reset',
+    title: '演示账号已重置',
+    body: '信用分已恢复到 100，待支付订单已清理，可以重新演示完整流程。',
+  })
+}
 
 const ensureRatingSummary = async (pool, user) => {
   const [[summary]] = await pool.execute(
@@ -661,7 +845,7 @@ const sportsSummaryForUser = async (pool, user) => {
       COUNT(*) AS played,
       SUM(CASE WHEN no_show = 1 THEN 1 ELSE 0 END) AS no_shows,
       SUM(CASE WHEN checked_in = 1 THEN 1 ELSE 0 END) AS checked_in
-    FROM sports_signup WHERE user_id = ?`,
+    FROM sports_signup WHERE user_id = ? AND payment_status = 'paid'`,
     [user.id],
   )
   const [creditRows] = await pool.execute(
@@ -696,7 +880,7 @@ const sportsProfileForUser = async (pool, user) => {
   return {
     summary: await sportsSummaryForUser(pool, user),
     rating,
-    orders,
+    orders: orders.map(serializeOrder),
     credit,
   }
 }
@@ -760,7 +944,7 @@ const publicPlayerProfile = async (pool, userId, viewer) => {
       COUNT(*) AS played,
       SUM(CASE WHEN checked_in = 1 THEN 1 ELSE 0 END) AS checked_in,
       SUM(CASE WHEN no_show = 1 THEN 1 ELSE 0 END) AS no_shows
-     FROM sports_signup WHERE user_id = ?`,
+     FROM sports_signup WHERE user_id = ? AND payment_status = 'paid'`,
     [userId],
   )
   const isSelf = Number(viewer.id) === Number(userId)
@@ -798,12 +982,12 @@ const gameRatingContext = async (pool, gameId, user) => {
     `SELECT s.user_id, s.username, s.checked_in, r.composite_score, r.level_label, r.peer_rating_count
      FROM sports_signup s
      LEFT JOIN sports_player_rating_summary r ON r.user_id = s.user_id
-     WHERE s.game_id = ?
+     WHERE s.game_id = ? AND s.payment_status = 'paid'
      ORDER BY s.create_time ASC`,
     [gameId],
   )
   const [[mySignup]] = await pool.execute(
-    'SELECT * FROM sports_signup WHERE game_id = ? AND user_id = ? LIMIT 1',
+    'SELECT * FROM sports_signup WHERE game_id = ? AND user_id = ? AND payment_status = "paid" LIMIT 1',
     [gameId, user.id],
   )
   const now = Date.now()
@@ -837,8 +1021,9 @@ const venueAvailability = async (pool, venueId, dateValue) => {
     `SELECT o.*, g.start_time, g.end_time
      FROM sports_order o
      LEFT JOIN sports_game g ON g.id = o.game_id
-     WHERE o.venue_id = ? AND DATE(o.create_time) = ?`,
-    [venueId, dayLabel],
+     WHERE o.venue_id = ? AND o.status IN ('pending_payment', 'paid', 'checked_in')
+       AND (DATE(o.booking_start_time) = ? OR DATE(g.start_time) = ?)`,
+    [venueId, dayLabel, dayLabel],
   )
   return {
     venue: serializeVenue(venue),
@@ -848,7 +1033,11 @@ const venueAvailability = async (pool, venueId, dateValue) => {
       const start = match ? combineDateTime(dayLabel, `${pad2(match[1])}:${match[2]}`) : null
       const end = match ? combineDateTime(dayLabel, `${pad2(match[3])}:${match[4]}`) : null
       const occupied = start && end
-        ? orders.some((order) => order.start_time && order.end_time && overlapsRange(start, end, order.start_time, order.end_time))
+        ? orders.some((order) => {
+            const orderStart = order.start_time || order.booking_start_time
+            const orderEnd = order.end_time || order.booking_end_time
+            return orderStart && orderEnd && overlapsRange(start, end, orderStart, orderEnd)
+          })
         : false
       return {
         id: `${venueId}-${index}`,
@@ -867,12 +1056,12 @@ const sportsMetrics = async (pool) => {
       (SELECT COUNT(*) FROM sports_order WHERE DATE(create_time) = CURRENT_DATE()) AS today_orders,
       (SELECT COALESCE(SUM(amount), 0) FROM sports_order WHERE DATE(create_time) = CURRENT_DATE()) AS today_income,
       (SELECT COUNT(*) FROM sports_game WHERE DATE(create_time) = CURRENT_DATE()) AS today_games,
-      (SELECT COUNT(DISTINCT user_id) FROM sports_signup WHERE create_time >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS wau,
+      (SELECT COUNT(DISTINCT user_id) FROM sports_signup WHERE create_time >= DATE_SUB(NOW(), INTERVAL 7 DAY) AND payment_status = 'paid') AS wau,
       (SELECT COUNT(*) FROM sports_game) AS total_games,
       (SELECT COALESCE(SUM(amount), 0) FROM sports_order) AS gmv,
       (SELECT COUNT(*) FROM sports_venue WHERE status = 'approved') AS approved_venues,
-      (SELECT COUNT(*) FROM sports_signup WHERE no_show = 1) AS no_show_count,
-      (SELECT COUNT(*) FROM sports_signup) AS signup_count
+      (SELECT COUNT(*) FROM sports_signup WHERE no_show = 1 AND payment_status = 'paid') AS no_show_count,
+      (SELECT COUNT(*) FROM sports_signup WHERE payment_status = 'paid') AS signup_count
   `)
   const signups = Number(daily.signup_count || 0)
   return {
@@ -895,6 +1084,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
     const user = requestUser(req)
 
     if (pathName === '/api/sports-app/venues' && req.method === 'GET') {
+      await trackEvent(pool, user, 'venue_list_view')
       const [rows] = await pool.execute('SELECT * FROM sports_venue ORDER BY status = "approved" DESC, create_time DESC')
       return json(res, rows.map(serializeVenue))
     }
@@ -969,6 +1159,13 @@ const handleSportsApi = async (req, res, requestUrl) => {
           demoResult,
         ],
       )
+      await trackEvent(pool, user, 'clip_submitted', { entity_type: 'game', entity_id: body.game_id || null })
+      await createNotification(pool, user, {
+        type: 'clip_generated',
+        title: '集锦任务已生成',
+        body: demoResult,
+        game_id: body.game_id ? Number(body.game_id) : null,
+      })
       return json(res, { ok: true, id: result.insertId, demo_result: demoResult }, 201)
     }
 
@@ -1078,6 +1275,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
     if (venueBookMatch && req.method === 'POST') {
       const body = await readJsonBody(req)
       const venueId = Number(venueBookMatch[1])
+      await requireGoodCredit(pool, user)
       const [[venue]] = await pool.execute('SELECT * FROM sports_venue WHERE id = ? LIMIT 1', [venueId])
       if (!venue) return json(res, { ok: false, error: 'venue not found' }, 404)
       const bookingDate = text(body.booking_date, 20)
@@ -1093,7 +1291,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
         `SELECT o.id, o.game_id, o.create_time, o.booking_start_time, o.booking_end_time, g.start_time, g.end_time
          FROM sports_order o
          LEFT JOIN sports_game g ON g.id = o.game_id
-         WHERE o.venue_id = ? AND o.status <> 'cancelled'`,
+         WHERE o.venue_id = ? AND o.status NOT IN ('cancelled', 'refunded')`,
         [venueId],
       )
       const hasConflict = conflicts.some((order) => {
@@ -1110,13 +1308,20 @@ const handleSportsApi = async (req, res, requestUrl) => {
       const amount = Number(venue.price_per_hour || 0) * amountHours
       const checkinCode = String(100000 + Math.floor(Math.random() * 900000))
       const [result] = await pool.execute(
-        'INSERT INTO sports_order (venue_id, game_id, user_id, username, amount, status, checkin_code, booking_start_time, booking_end_time) VALUES (?, NULL, ?, ?, ?, "paid", ?, ?, ?)',
+        'INSERT INTO sports_order (venue_id, game_id, user_id, username, amount, status, checkin_code, booking_start_time, booking_end_time) VALUES (?, NULL, ?, ?, ?, "pending_payment", ?, ?, ?)',
         [venueId, user.id, user.username, amount, checkinCode, bookingStart, bookingEnd],
       )
+      await createNotification(pool, user, {
+        type: 'payment_required',
+        title: '场地订单待支付',
+        body: `${venue.name} ${bookingLabel} 已锁定，请尽快完成支付。`,
+        order_id: result.insertId,
+      })
       return json(res, {
         ok: true,
         order_id: result.insertId,
         checkin_code: checkinCode,
+        status: 'pending_payment',
         amount,
         booking_range: bookingLabel,
         booking_date: bookingDate,
@@ -1151,9 +1356,10 @@ const handleSportsApi = async (req, res, requestUrl) => {
     }
 
     if (pathName === '/api/sports-app/games' && req.method === 'GET') {
+      await trackEvent(pool, user, 'game_list_view')
       const [rows] = await pool.execute(
         `SELECT g.*, v.name AS venue_name, v.area, v.address, v.cover_url,
-          COUNT(s.id) AS joined_count,
+          SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS joined_count,
           SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
           SUM(CASE WHEN s.checked_in = 1 THEN 1 ELSE 0 END) AS checked_in_count,
           MAX(CASE WHEN s.user_id = ? THEN 1 ELSE 0 END) AS is_joined,
@@ -1168,7 +1374,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
           ), JSON_ARRAY()) AS players_json
          FROM sports_game g
          JOIN sports_venue v ON v.id = g.venue_id
-         LEFT JOIN sports_signup s ON s.game_id = g.id
+         LEFT JOIN sports_signup s ON s.game_id = g.id AND s.payment_status = 'paid'
          LEFT JOIN sports_player_rating_summary rs ON rs.user_id = s.user_id
          WHERE g.status <> 'cancelled'
          GROUP BY g.id
@@ -1180,6 +1386,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
 
     if (pathName === '/api/sports-app/games' && req.method === 'POST') {
       const body = await readJsonBody(req)
+      await requireGoodCredit(pool, user)
       const [result] = await pool.execute(
         `INSERT INTO sports_game
           (sport, title, venue_id, start_time, end_time, capacity, fee_per_person, notes, creator_user_id, status)
@@ -1200,36 +1407,47 @@ const handleSportsApi = async (req, res, requestUrl) => {
         'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note, related_game_id) VALUES (?, ?, "create_game", 2, "发起真实球局", ?)',
         [user.id, user.username, result.insertId],
       )
+      await trackEvent(pool, user, 'game_created', { entity_type: 'game', entity_id: result.insertId })
       return json(res, { ok: true, id: result.insertId }, 201)
     }
 
     const joinMatch = pathName.match(/^\/api\/sports-app\/games\/(\d+)\/join$/)
     if (joinMatch && req.method === 'POST') {
       const gameId = Number(joinMatch[1])
+      await requireGoodCredit(pool, user)
       const [[game]] = await pool.execute(
-        'SELECT g.*, v.id AS venue_id FROM sports_game g JOIN sports_venue v ON v.id = g.venue_id WHERE g.id = ? LIMIT 1',
-        [gameId],
+        `SELECT g.*, v.id AS venue_id,
+          SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+          MAX(CASE WHEN s.user_id = ? AND s.payment_status = 'paid' THEN 1 ELSE 0 END) AS is_joined
+         FROM sports_game g
+         JOIN sports_venue v ON v.id = g.venue_id
+         LEFT JOIN sports_signup s ON s.game_id = g.id
+         WHERE g.id = ? AND g.status <> 'cancelled'
+         GROUP BY g.id
+         LIMIT 1`,
+        [user.id, gameId],
       )
       if (!game) return json(res, { ok: false, error: 'game not found' }, 404)
-
-      try {
-        await pool.execute(
-          'INSERT INTO sports_signup (game_id, user_id, username, paid_amount, payment_status) VALUES (?, ?, ?, ?, "paid")',
-          [gameId, user.id, user.username, Number(game.fee_per_person || 0)],
-        )
-      } catch (error) {
-        if (error?.code !== 'ER_DUP_ENTRY') throw error
+      if (Number(game.is_joined || 0) === 1) return json(res, { ok: false, error: '你已经报名过这场球局' }, 409)
+      if (Number(game.paid_count || 0) >= Number(game.capacity || 0)) return json(res, { ok: false, error: '球局已满员，暂不能报名' }, 409)
+      const lifecycle = gameLifecycleStatus(game, Number(game.paid_count || 0), Number(game.paid_count || 0), 0)
+      if (!['forming', 'open'].includes(lifecycle)) {
+        return json(res, { ok: false, error: '该球局已锁局或已开赛，暂不能报名' }, 409)
       }
       const checkinCode = String(100000 + Math.floor(Math.random() * 900000))
       const [orderResult] = await pool.execute(
-        'INSERT INTO sports_order (venue_id, game_id, user_id, username, amount, status, checkin_code) VALUES (?, ?, ?, ?, ?, "paid", ?)',
+        'INSERT INTO sports_order (venue_id, game_id, user_id, username, amount, status, checkin_code) VALUES (?, ?, ?, ?, ?, "pending_payment", ?)',
         [game.venue_id, gameId, user.id, user.username, Number(game.fee_per_person || 0), checkinCode],
       )
-      await pool.execute(
-        'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note, related_game_id) VALUES (?, ?, "paid_signup", 1, "报名并完成支付", ?)',
-        [user.id, user.username, gameId],
-      )
-      return json(res, { ok: true, order_id: orderResult.insertId, checkin_code: checkinCode })
+      await trackEvent(pool, user, 'order_created', { entity_type: 'game', entity_id: gameId, metadata: { order_id: orderResult.insertId } })
+      await createNotification(pool, user, {
+        type: 'payment_required',
+        title: '报名订单待支付',
+        body: `${game.title} 已生成待支付订单，支付后才会正式占位。`,
+        order_id: orderResult.insertId,
+        game_id: gameId,
+      })
+      return json(res, { ok: true, order_id: orderResult.insertId, checkin_code: checkinCode, status: 'pending_payment' }, 201)
     }
 
     const gameDetailMatch = pathName.match(/^\/api\/sports-app\/games\/(\d+)$/)
@@ -1283,8 +1501,31 @@ const handleSportsApi = async (req, res, requestUrl) => {
       }
       for (const target of savedTargets) {
         await recalculatePlayerRating(pool, target.id, target.username)
+        await createNotification(pool, target, {
+          type: 'rating_updated',
+          title: '你收到新的赛后互评',
+          body: '综合实力分已根据有效互评重新计算。',
+          game_id: gameId,
+        })
       }
+      await createNotification(pool, user, {
+        type: 'review_submitted',
+        title: '赛后互评已提交',
+        body: `本场已提交 ${savedTargets.length} 条互评。`,
+        game_id: gameId,
+      })
+      await trackEvent(pool, user, 'review_submitted', { entity_type: 'game', entity_id: gameId, metadata: { saved: savedTargets.length } })
       return json(res, { ok: true, saved: savedTargets.length })
+    }
+
+    if (pathName === '/api/sports-app/track' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      await trackEvent(pool, user, text(body.event_name, 60), {
+        entity_type: text(body.entity_type, 40),
+        entity_id: body.entity_id ? Number(body.entity_id) : null,
+        metadata: body.metadata || {},
+      })
+      return json(res, { ok: true })
     }
 
     if (pathName === '/api/sports-app/me' && req.method === 'GET') return json(res, await sportsProfileForUser(pool, user))
@@ -1298,7 +1539,94 @@ const handleSportsApi = async (req, res, requestUrl) => {
          ORDER BY o.create_time DESC
          LIMIT 100`,
       )
-      return json(res, orders)
+      return json(res, orders.map(serializeOrder))
+    }
+
+    if (pathName === '/api/sports-app/notifications' && req.method === 'GET') {
+      return json(res, await sportsNotificationsForUser(pool, user))
+    }
+
+    const readNotificationMatch = pathName.match(/^\/api\/sports-app\/notifications\/(\d+)\/read$/)
+    if (readNotificationMatch && req.method === 'POST') {
+      await pool.execute(
+        'UPDATE sports_notification SET status = "read", read_at = NOW() WHERE id = ? AND user_id = ?',
+        [Number(readNotificationMatch[1]), user.id],
+      )
+      return json(res, { ok: true })
+    }
+
+    const payMatch = pathName.match(/^\/api\/sports-app\/orders\/(\d+)\/pay$/)
+    if (payMatch && req.method === 'POST') {
+      const orderId = Number(payMatch[1])
+      const [[order]] = await pool.execute('SELECT * FROM sports_order WHERE id = ? LIMIT 1', [orderId])
+      if (!order) return json(res, { ok: false, error: 'order not found' }, 404)
+      if (Number(order.user_id) !== Number(user.id)) return json(res, { ok: false, error: '只能支付自己的订单' }, 403)
+      if (order.status !== 'pending_payment') return json(res, { ok: false, error: '订单当前状态不能支付' }, 409)
+      await requireGoodCredit(pool, user)
+      if (order.game_id) {
+        const [[game]] = await pool.execute(
+          `SELECT g.*, SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count
+           FROM sports_game g
+           LEFT JOIN sports_signup s ON s.game_id = g.id
+           WHERE g.id = ?
+           GROUP BY g.id
+           LIMIT 1`,
+          [order.game_id],
+        )
+        if (!game || game.status === 'cancelled') return json(res, { ok: false, error: '球局已取消' }, 409)
+        if (Number(game.paid_count || 0) >= Number(game.capacity || 0)) return json(res, { ok: false, error: '球局已满员，支付失败' }, 409)
+        await pool.execute(
+          `INSERT INTO sports_signup (game_id, user_id, username, paid_amount, payment_status)
+           VALUES (?, ?, ?, ?, 'paid')
+           ON DUPLICATE KEY UPDATE paid_amount = VALUES(paid_amount), payment_status = 'paid'`,
+          [order.game_id, order.user_id, order.username, Number(order.amount || 0)],
+        )
+        await pool.execute(
+          'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note, related_game_id) VALUES (?, ?, "paid_signup", 1, "报名并完成支付", ?)',
+          [order.user_id, order.username, order.game_id],
+        )
+      }
+      await pool.execute('UPDATE sports_order SET status = "paid", paid_at = NOW() WHERE id = ?', [orderId])
+      await trackEvent(pool, user, 'payment_success', { entity_type: order.game_id ? 'game' : 'venue', entity_id: order.game_id || order.venue_id, metadata: { order_id: orderId, amount: Number(order.amount || 0) } })
+      await createNotification(pool, user, {
+        type: 'payment_success',
+        title: '支付成功',
+        body: `订单 #${orderId} 已支付成功，请到场后使用核销码 ${order.checkin_code}。`,
+        order_id: orderId,
+        game_id: order.game_id,
+      })
+      return json(res, { ok: true, order_id: orderId, checkin_code: order.checkin_code, status: 'paid' })
+    }
+
+    const cancelOrderMatch = pathName.match(/^\/api\/sports-app\/orders\/(\d+)\/cancel$/)
+    if (cancelOrderMatch && req.method === 'POST') {
+      const orderId = Number(cancelOrderMatch[1])
+      const [[order]] = await pool.execute(
+        `SELECT o.*, g.start_time
+         FROM sports_order o
+         LEFT JOIN sports_game g ON g.id = o.game_id
+         WHERE o.id = ?
+         LIMIT 1`,
+        [orderId],
+      )
+      if (!order) return json(res, { ok: false, error: 'order not found' }, 404)
+      if (Number(order.user_id) !== Number(user.id)) return json(res, { ok: false, error: '只能取消自己的订单' }, 403)
+      const cancelRule = canCancelOrder(order)
+      if (!cancelRule.ok) return json(res, { ok: false, error: cancelRule.error }, 409)
+      const nextStatus = cancelRule.nextStatus
+      await pool.execute('UPDATE sports_order SET status = ?, cancelled_at = NOW() WHERE id = ?', [nextStatus, orderId])
+      await trackEvent(pool, user, nextStatus === 'refunded' ? 'refund_success' : 'order_cancelled', { entity_type: order.game_id ? 'game' : 'venue', entity_id: order.game_id || order.venue_id, metadata: { order_id: orderId } })
+      if (order.game_id) {
+        await pool.execute('UPDATE sports_signup SET payment_status = ? WHERE game_id = ? AND user_id = ?', [nextStatus, order.game_id, order.user_id])
+      }
+      await createNotification(pool, user, {
+        type: nextStatus === 'refunded' ? 'refund_success' : 'order_cancelled',
+        title: nextStatus === 'refunded' ? '订单已退款' : '订单已取消',
+        body: `订单 #${orderId} 已更新为${nextStatus === 'refunded' ? '已退款' : '已取消'}。`,
+        order_id: orderId,
+        game_id: order.game_id,
+      })
+      return json(res, { ok: true, status: nextStatus })
     }
 
     const checkinMatch = pathName.match(/^\/api\/sports-app\/orders\/(\d+)\/checkin$/)
@@ -1306,6 +1634,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
       const orderId = Number(checkinMatch[1])
       const [[order]] = await pool.execute('SELECT * FROM sports_order WHERE id = ? LIMIT 1', [orderId])
       if (!order) return json(res, { ok: false, error: 'order not found' }, 404)
+      if (order.status !== 'paid') return json(res, { ok: false, error: '只有已支付订单可以核销' }, 409)
       await pool.execute('UPDATE sports_order SET status = "checked_in", checked_in_at = NOW() WHERE id = ?', [orderId])
       if (order.game_id) {
         await pool.execute('UPDATE sports_signup SET checked_in = 1 WHERE game_id = ? AND user_id = ?', [order.game_id, order.user_id])
@@ -1313,12 +1642,28 @@ const handleSportsApi = async (req, res, requestUrl) => {
           'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note, related_game_id) VALUES (?, ?, "checkin", 3, "到场核销", ?)',
           [order.user_id, order.username, order.game_id],
         )
+        await trackEvent(pool, { id: order.user_id, username: order.username }, 'checkin_success', { entity_type: 'game', entity_id: order.game_id, metadata: { order_id: orderId } })
+        await createNotification(pool, { id: order.user_id, username: order.username }, {
+          type: 'checkin_success',
+          title: '核销成功',
+          body: '你已完成到场核销，信用分 +3。',
+          order_id: orderId,
+          game_id: order.game_id,
+        })
       }
       return json(res, { ok: true })
     }
 
     if (pathName === '/api/sports-app/admin/metrics' && req.method === 'GET') {
-      return json(res, await sportsMetrics(pool))
+      return json(res, {
+        ...await sportsMetrics(pool),
+        funnel: await analyticsFunnel(pool),
+      })
+    }
+
+    if (pathName === '/api/sports-app/admin/demo-reset' && req.method === 'POST') {
+      await resetDemoAccount(pool, user)
+      return json(res, { ok: true })
     }
 
     if (pathName === '/api/sports-app/admin/users' && req.method === 'GET') {
@@ -1328,7 +1673,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
           SUM(CASE WHEN s.no_show = 1 THEN 1 ELSE 0 END) AS no_shows,
           COALESCE(SUM(c.score_delta), 100) AS credit_score
          FROM user u
-         LEFT JOIN sports_signup s ON s.user_id = u.id
+         LEFT JOIN sports_signup s ON s.user_id = u.id AND s.payment_status = 'paid'
          LEFT JOIN sports_credit_event c ON c.user_id = u.id
          GROUP BY u.id
          ORDER BY u.create_time DESC
@@ -1372,7 +1717,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
       const [venues] = await pool.execute('SELECT * FROM sports_venue ORDER BY status = "approved" DESC, create_time DESC')
       const [games] = await pool.execute(
         `SELECT g.*, v.name AS venue_name, v.area, v.address, v.cover_url,
-          COUNT(s.id) AS joined_count,
+          SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS joined_count,
           SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
           SUM(CASE WHEN s.checked_in = 1 THEN 1 ELSE 0 END) AS checked_in_count,
           MAX(CASE WHEN s.user_id = ? THEN 1 ELSE 0 END) AS is_joined,
@@ -1387,7 +1732,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
           ), JSON_ARRAY()) AS players_json
          FROM sports_game g
          JOIN sports_venue v ON v.id = g.venue_id
-         LEFT JOIN sports_signup s ON s.game_id = g.id
+         LEFT JOIN sports_signup s ON s.game_id = g.id AND s.payment_status = 'paid'
          LEFT JOIN sports_player_rating_summary rs ON rs.user_id = s.user_id
          WHERE g.status <> 'cancelled'
          GROUP BY g.id
@@ -1401,14 +1746,18 @@ const handleSportsApi = async (req, res, requestUrl) => {
         teams: await sportsTeamsForUser(pool, user),
         clips: await sportsClipsForUser(pool, user),
         uploads: await sportsUploadsForUser(pool, user),
-        metrics: await sportsMetrics(pool),
+        notifications: await sportsNotificationsForUser(pool, user),
+        metrics: {
+          ...await sportsMetrics(pool),
+          funnel: await analyticsFunnel(pool),
+        },
       })
     }
 
     return json(res, { ok: false, error: 'sports endpoint not found' }, 404)
   } catch (error) {
     console.error('[sports-app] error', error)
-    return json(res, { ok: false, error: error instanceof Error ? error.message : 'sports api failed' }, 500)
+    return json(res, { ok: false, error: error instanceof Error ? error.message : 'sports api failed' }, error.statusCode || 500)
   }
 }
 
