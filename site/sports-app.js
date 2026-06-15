@@ -356,6 +356,27 @@
     return '<div class="metric"><span>' + h(label) + '</span><strong>' + h(value) + '</strong></div>';
   }
 
+  function modalTitle(title, closeAttr) {
+    return [
+      '<div class="panel-title modal-title">',
+      '  <h3>' + h(title) + '</h3>',
+      '  <div class="modal-title-actions">',
+      '    <button class="secondary-btn" type="button" data-return-home>回主页</button>',
+      '    <button class="secondary-btn" type="button" ' + closeAttr + '>关闭</button>',
+      '  </div>',
+      '</div>',
+    ].join('');
+  }
+
+  function clearOverlays() {
+    state.reviewDetail = null;
+    state.playerProfile = null;
+    state.gameDetail = null;
+    state.joinConfirm = null;
+    state.venueBooking = null;
+    state.paymentConfirm = null;
+  }
+
   function hero() {
     var metrics = state.data.metrics || {};
     var me = state.data.me || {};
@@ -364,8 +385,62 @@
     var hotVenue = approved[0] || {};
     var nextGames = (state.data.games || []).slice(0, 2);
     var featuredVenues = approved.slice(0, 3);
+    var games = state.data.games || [];
+    var availableGames = games.filter(function (game) {
+      return ['forming', 'open'].includes(game.status);
+    }).length;
+    var hotVenues = approved.length;
+    var waitingPlayers = games.reduce(function (sum, game) {
+      return sum + Math.max(0, Number(game.capacity || 0) - Number(game.joined_count || 0));
+    }, 0);
     return [
       '<section class="miniapp-home">',
+      '  <div class="radar-wrap">',
+      '  <div class="radar-slider" aria-label="今日约球雷达">',
+      '    <article class="radar-card radar-main">',
+      '      <div class="radar-copy">',
+      '        <span class="radar-kicker">今日约球雷达</span>',
+      '        <h2><strong>今日可约 ' + h(availableGames) + ' 场</strong><span>' + h(hotVenues) + ' 个热门场馆 / ' + h(waitingPlayers) + ' 人待加入</span></h2>',
+      '        <div class="radar-actions"><button class="primary-btn radar-primary" type="button" data-jump-view="create">立即组局</button><button class="secondary-btn" type="button" data-jump-view="venues">先订场地</button></div>',
+      '        <div class="radar-flow"><span>找场地</span><i></i><span>报名支付</span><i></i><span>到场核销</span><i></i><span>信用累计</span></div>',
+      '      </div>',
+      '      <button class="radar-visual" type="button" data-open-venue-book="' + h(hotVenue.id || '') + '">',
+      '        <img src="' + h(hotVenue.cover_url || 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=1600&q=80') + '" alt="' + h(hotVenue.name || '南京合作场馆') + '" />',
+      '        <span>' + h(hotVenue.name || '南京合作场馆') + '</span>',
+      '      </button>',
+      '    </article>',
+      '    <article class="radar-card radar-map-card">',
+      '      <div class="radar-copy">',
+      '        <span class="radar-kicker">江宁热区</span>',
+      '        <h3>南师附中 / 大学城 / 开发区</h3>',
+      '        <p>优先展示可订时段和附近球局，适合现场快速演示。</p>',
+      '      </div>',
+      '      <div class="radar-map-visual" aria-label="模拟地图">',
+      '        <div class="mock-map-route"></div>',
+      '        <div class="mock-map-zone zone-a">南师附中</div>',
+      '        <div class="mock-map-zone zone-b">大学城</div>',
+      '        <div class="mock-map-zone zone-c">开发区</div>',
+      '        <button type="button" class="mock-map-pin pin-a" data-jump-view="venues"><b></b><span>3 场可订</span></button>',
+      '        <button type="button" class="mock-map-pin pin-b" data-jump-view="games"><b></b><span>' + h(Math.min(waitingPlayers, 99)) + ' 人待加入</span></button>',
+      '        <button type="button" class="mock-map-pin pin-c" data-jump-view="venues"><b></b><span>黄金时段</span></button>',
+      '        <em>模拟地图 · 正式版接入真实地图</em>',
+      '      </div>',
+      '    </article>',
+      '    <article class="radar-card radar-join-card">',
+      '      <div class="radar-copy">',
+      '        <span class="radar-kicker">待加入</span>',
+      '        <h3>' + h(waitingPlayers) + ' 个空位正在等人</h3>',
+      '        <p>按时间和实力匹配推荐，报名后生成待支付订单。</p>',
+      '        <button class="primary-btn radar-primary" type="button" data-jump-view="games">去看球局</button>',
+      '      </div>',
+      '      <div class="radar-visual radar-join-visual">',
+      '        <img src="https://images.unsplash.com/photo-1518091043644-c1d4457512c6?auto=format&fit=crop&w=1200&q=80" alt="待加入球局" />',
+      '        <span>附近球局 · 即将开场</span>',
+      '      </div>',
+      '    </article>',
+      '  </div>',
+      '    <div class="radar-scroll-hint"><span>左右滑动查看更多</span><i class="is-active"></i><i></i><i></i></div>',
+      '  </div>',
       '  <div class="home-search-row">',
       '    <button class="location-pill" type="button" data-area-filter="all">南京</button>',
       '    <button class="search-box" type="button" data-jump-view="venues">请输入场馆名称、地址</button>',
@@ -379,15 +454,6 @@
       serviceTile('basketball', '篮球场', '快速订', 'games'),
       serviceTile('publish', '发布', '发局报名', 'create'),
       '  </div>',
-      '  <button class="home-banner" type="button" data-open-venue-book="' + h(hotVenue.id || '') + '">',
-      '    <div class="home-banner-copy">',
-      '      <span class="tag orange">今日推荐</span>',
-      '      <h2>周末 ' + money(hotVenue.price_per_hour || 180) + ' 起订场</h2>',
-      '      <p>' + h(hotVenue.name || '江宁合作球馆') + ' · ' + h(hotVenue.area || '江宁大学城') + '</p>',
-      '      <strong>' + h((hotVenue.open_slots || ['周末黄金时段'])[0]) + '</strong>',
-      '    </div>',
-      '    <div class="home-banner-action"><span>立即订场</span><b>→</b></div>',
-      '  </button>',
       '  <section class="section">',
       '    <div class="panel-title"><h3>今日球局(' + h((state.data.games || []).length) + ')</h3><button class="text-link" type="button" data-jump-view="games">更多</button></div>',
       '    <div class="home-game-list">' + nextGames.map(homeGameCard).join('') + '</div>',
@@ -524,7 +590,7 @@
     return [
       '<div class="modal-backdrop" data-close-venue-booking>',
       '  <section class="venue-booking-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
-      '    <div class="panel-title"><h3>选择订场时段</h3><button class="secondary-btn" type="button" data-close-venue-booking>关闭</button></div>',
+      modalTitle('选择订场时段', 'data-close-venue-booking'),
       '    <div class="join-summary">',
       '      <strong>' + h(venue.name) + '</strong>',
       '      <span>' + h(venue.area) + ' / ' + money(venue.price_per_hour) + '/小时起</span>',
@@ -637,7 +703,7 @@
     return [
       '<div class="modal-backdrop" data-close-game-detail>',
       '  <section class="game-detail-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
-      '    <div class="panel-title"><h3>' + h(game.title) + '</h3><button class="secondary-btn" type="button" data-close-game-detail>关闭</button></div>',
+      modalTitle(game.title || '球局详情', 'data-close-game-detail'),
       '    <div class="game-detail-hero">',
       '      <div><span class="tag blue">' + sportLabel(game.sport) + '</span><h4>' + h(game.venue_name) + '</h4><p>' + h(game.area) + ' / ' + h(game.address) + '</p></div>',
       '      <div class="order-code"><span>平均实力</span><strong>' + oneDecimal(avg, 3) + '</strong></div>',
@@ -664,7 +730,7 @@
     return [
       '<div class="modal-backdrop" data-close-join-confirm>',
       '  <section class="join-confirm-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
-      '    <div class="panel-title"><h3>确认报名</h3><button class="secondary-btn" type="button" data-close-join-confirm>关闭</button></div>',
+      modalTitle('确认报名', 'data-close-join-confirm'),
       '    <div class="join-summary">',
       '      <strong>' + h(game.title) + '</strong>',
       '      <span>' + h(game.venue_name) + ' / ' + fmtDate(game.start_time) + '</span>',
@@ -690,7 +756,7 @@
     return [
       '<div class="modal-backdrop" data-close-payment>',
       '  <section class="payment-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
-      '    <div class="panel-title"><h3>支付确认</h3><button class="secondary-btn" type="button" data-close-payment>关闭</button></div>',
+      modalTitle('支付确认', 'data-close-payment'),
       '    <div class="payment-hero">',
       '      <div><span class="tag orange">' + statusLabel(order.status || 'pending_payment') + '</span><h4>' + h(order.title || '场地预订') + '</h4><p>' + h(order.venue_name || order.venue || '合作场馆') + '</p></div>',
       '      <div class="order-code"><span>应付金额</span><strong>' + money(order.amount) + '</strong></div>',
@@ -741,7 +807,7 @@
     return [
       '<div class="guide-card">',
       '  <div><strong>实力评级新手引导</strong><p>综合分由自评 30% + 有效互评 70% 计算；互评需同场到场球员提交，单场同一球员满 3 条才生效，并会去掉 1 个最高分和 1 个最低分。</p></div>',
-      '  <button class="secondary-btn" type="button" data-close-rating-guide>我知道了</button>',
+      '  <div class="guide-actions"><button class="secondary-btn" type="button" data-return-home>回主页</button><button class="secondary-btn" type="button" data-close-rating-guide>我知道了</button></div>',
       '</div>',
     ].join('');
   }
@@ -807,7 +873,7 @@
     return [
       '<div class="modal-backdrop" data-close-review>',
       '  <section class="review-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
-      '    <div class="panel-title"><h3>赛后互评</h3><button class="secondary-btn" type="button" data-close-review>关闭</button></div>',
+      modalTitle('赛后互评', 'data-close-review'),
       '    <p class="muted">' + h(detail.game.title) + ' / ' + fmtDate(detail.game.end_time) + ' 结束后 24 小时内可提交。单个球员本场满 3 条互评后计入综合分。</p>',
       detail.review_open ? '<form data-peer-review><div class="review-list">' + (players.length ? players.map(reviewTargetCard).join('') : '<div class="empty">暂无可评价的同场到场球员，或你已完成本场互评。</div>') + '</div><label class="check-row"><input type="checkbox" name="anonymous" checked /> 匿名提交</label><button class="primary-btn" type="submit"' + (players.length ? '' : ' disabled') + '>提交本场互评</button></form>' : '<div class="empty">互评入口未开放：需本人报名并完成到场核销，且在球局结束后 24 小时内提交。</div>',
       '  </section>',
@@ -835,7 +901,7 @@
     return [
       '<div class="modal-backdrop" data-close-player-profile>',
       '  <section class="player-profile-modal" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
-      '    <div class="panel-title"><h3>球员主页</h3><button class="secondary-btn" type="button" data-close-player-profile>关闭</button></div>',
+      modalTitle('球员主页', 'data-close-player-profile'),
       '    <div class="profile-head">',
       '      <span class="avatar-large">' + h(initials(profile.username)) + '</span>',
       '      <div><h4>' + h(profile.username) + '</h4>' + ratingBadge(rating) + '</div>',
@@ -1370,6 +1436,7 @@
         } else {
           state.userView = 'home';
         }
+        clearOverlays();
         render();
         try {
           await loadBootstrap();
@@ -1386,6 +1453,7 @@
         if (projectFilter) state.sportFilter = projectFilter;
         state.userView = button.getAttribute('data-user-view') || button.getAttribute('data-jump-view');
         state.mode = 'user';
+        clearOverlays();
         if (state.userView === 'home') track('home_view');
         if (state.userView === 'venues') track('venue_list_view');
         if (state.userView === 'games') track('game_list_view');
@@ -1397,6 +1465,7 @@
       button.addEventListener('click', async function () {
         state.mode = 'user';
         state.userView = 'home';
+        clearOverlays();
         render();
         try {
           await loadBootstrap();
