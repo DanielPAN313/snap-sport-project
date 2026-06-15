@@ -5,12 +5,15 @@ import { createReadStream } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
+import mysql from 'mysql2/promise'
+import bcrypt from 'bcryptjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..', 'site')
 const modulePartsRoot = path.resolve(__dirname, '..', 'modules')
 const modulesRoot = path.resolve(__dirname, '..', 'modules', 'web')
 const dataDir = path.resolve(__dirname, '..', 'data')
+const localEnvFile = path.resolve(__dirname, '..', '.env')
 const vibeResearchRoot = '/gpfs/users/liujinxiu/research/viberesearch'
 const globalEnvFile = '/gpfs/users/liujinxiu/.env'
 const agentsFile = path.join(dataDir, 'uploaded-agents.json')
@@ -49,6 +52,1422 @@ const readJsonBody = async (req) => {
 }
 
 const text = (value, max = 500) => String(value || '').trim().slice(0, max)
+
+let dbPoolPromise = null
+
+const readRuntimeEnv = async () => ({
+  ...await readDotEnv(globalEnvFile),
+  ...await readDotEnv(localEnvFile),
+  ...process.env,
+})
+
+const getDbPool = async () => {
+  if (dbPoolPromise) return dbPoolPromise
+  dbPoolPromise = (async () => {
+    const env = await readRuntimeEnv()
+    const database = env.MYSQL_DATABASE || env.DB_NAME
+    const user = env.MYSQL_USER || env.DB_USER
+    if (!database || !user) {
+      throw new Error('MySQL is not configured. Set MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, and MYSQL_DATABASE in .env.')
+    }
+    const pool = mysql.createPool({
+      host: env.MYSQL_HOST || env.DB_HOST || '127.0.0.1',
+      port: Number(env.MYSQL_PORT || env.DB_PORT || 3306),
+      user,
+      password: env.MYSQL_PASSWORD || env.DB_PASSWORD || '',
+      database,
+      waitForConnections: true,
+      connectionLimit: Number(env.MYSQL_CONNECTION_LIMIT || 10),
+      namedPlaceholders: true,
+    })
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS \`user\` (
+        \`id\` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        \`username\` VARCHAR(50) NOT NULL,
+        \`password_hash\` VARCHAR(255) NOT NULL,
+        \`create_time\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        \`status\` TINYINT NOT NULL DEFAULT 1 COMMENT '1 normal, 0 disabled',
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uk_user_username\` (\`username\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    return pool
+  })()
+  return dbPoolPromise
+}
+
+const makeAuthToken = (user) => `db_user_${user.id}_${crypto.randomUUID()}`
+
+const publicAuthUser = (user) => ({
+  id: user.id,
+  username: user.username,
+  name: user.username,
+  email: user.username,
+  role: 'player',
+  token: makeAuthToken(user),
+})
+
+let sportsSchemaPromise = null
+
+const ratingDimensions = ['technique', 'physical', 'tactics', 'defense', 'attitude']
+const ratingPresets = {
+  beginner: 1,
+  casual: 2,
+  advanced: 3,
+  expert: 4,
+  master: 5,
+}
+
+const clampRating = (value) => Math.max(1, Math.min(5, Number(value || 1)))
+
+const normalizeRatingBody = (body) => {
+  const presetScore = ratingPresets[text(body.preset, 20)] || null
+  const rating = {}
+  for (const key of ratingDimensions) {
+    rating[key] = clampRating(body[key] ?? presetScore ?? 3)
+  }
+  return rating
+}
+
+const averageRating = (rating) => {
+  const total = ratingDimensions.reduce((sum, key) => sum + clampRating(rating[key]), 0)
+  return Math.round((total / ratingDimensions.length) * 10) / 10
+}
+
+const ratingLabel = (score) => {
+  const value = Number(score || 0)
+  if (value >= 4.6) return '大神'
+  if (value >= 4.0) return '高手'
+  if (value >= 3.0) return '进阶'
+  if (value >= 2.0) return '业余'
+  return '入门'
+}
+
+const ensureSportsSchema = async () => {
+  if (sportsSchemaPromise) return sportsSchemaPromise
+  sportsSchemaPromise = (async () => {
+    const pool = await getDbPool()
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_venue (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        name VARCHAR(100) NOT NULL,
+        area VARCHAR(80) NOT NULL,
+        address VARCHAR(255) NOT NULL,
+        lat DECIMAL(10, 7) NOT NULL DEFAULT 31.9450000,
+        lng DECIMAL(10, 7) NOT NULL DEFAULT 118.8400000,
+        sports VARCHAR(80) NOT NULL DEFAULT 'football,basketball',
+        indoor TINYINT NOT NULL DEFAULT 1,
+        price_per_hour DECIMAL(10,2) NOT NULL DEFAULT 0,
+        cover_url VARCHAR(600) NOT NULL DEFAULT '',
+        photos_json TEXT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        contact VARCHAR(80) NOT NULL DEFAULT '',
+        manager_user_id INT UNSIGNED NULL,
+        open_slots_json TEXT NULL,
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_venue_status (status),
+        KEY idx_sports_venue_area (area)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_game (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        sport VARCHAR(20) NOT NULL,
+        title VARCHAR(120) NOT NULL,
+        venue_id INT UNSIGNED NOT NULL,
+        start_time DATETIME NOT NULL,
+        end_time DATETIME NOT NULL,
+        capacity INT UNSIGNED NOT NULL DEFAULT 10,
+        fee_per_person DECIMAL(10,2) NOT NULL DEFAULT 0,
+        notes VARCHAR(500) NOT NULL DEFAULT '',
+        creator_user_id INT UNSIGNED NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'open',
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_game_time (start_time),
+        KEY idx_sports_game_venue (venue_id),
+        CONSTRAINT fk_sports_game_venue FOREIGN KEY (venue_id) REFERENCES sports_venue(id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_signup (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        game_id INT UNSIGNED NOT NULL,
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        paid_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+        payment_status VARCHAR(20) NOT NULL DEFAULT 'paid',
+        checked_in TINYINT NOT NULL DEFAULT 0,
+        no_show TINYINT NOT NULL DEFAULT 0,
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uk_sports_signup_game_user (game_id, user_id),
+        KEY idx_sports_signup_user (user_id),
+        CONSTRAINT fk_sports_signup_game FOREIGN KEY (game_id) REFERENCES sports_game(id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_order (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        venue_id INT UNSIGNED NOT NULL,
+        game_id INT UNSIGNED NULL,
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL DEFAULT 'paid',
+        checkin_code VARCHAR(30) NOT NULL,
+        booking_start_time DATETIME NULL,
+        booking_end_time DATETIME NULL,
+        checked_in_at DATETIME NULL,
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_order_venue (venue_id),
+        KEY idx_sports_order_game (game_id),
+        KEY idx_sports_order_user (user_id),
+        CONSTRAINT fk_sports_order_venue FOREIGN KEY (venue_id) REFERENCES sports_venue(id),
+        CONSTRAINT fk_sports_order_game FOREIGN KEY (game_id) REFERENCES sports_game(id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_credit_event (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        event_type VARCHAR(30) NOT NULL,
+        score_delta INT NOT NULL DEFAULT 0,
+        note VARCHAR(255) NOT NULL DEFAULT '',
+        related_game_id INT UNSIGNED NULL,
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_credit_user (user_id),
+        KEY idx_sports_credit_game (related_game_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute('ALTER TABLE sports_order ADD COLUMN booking_start_time DATETIME NULL').catch((error) => {
+      if (error?.code !== 'ER_DUP_FIELDNAME') throw error
+    })
+    await pool.execute('ALTER TABLE sports_order ADD COLUMN booking_end_time DATETIME NULL').catch((error) => {
+      if (error?.code !== 'ER_DUP_FIELDNAME') throw error
+    })
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_player_self_rating (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        technique TINYINT NOT NULL DEFAULT 3,
+        physical TINYINT NOT NULL DEFAULT 3,
+        tactics TINYINT NOT NULL DEFAULT 3,
+        defense TINYINT NOT NULL DEFAULT 3,
+        attitude TINYINT NOT NULL DEFAULT 3,
+        average_score DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        edit_count_window INT UNSIGNED NOT NULL DEFAULT 0,
+        window_start DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uk_sports_self_rating_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_player_peer_rating (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        game_id INT UNSIGNED NOT NULL,
+        rater_user_id INT UNSIGNED NOT NULL,
+        rater_username VARCHAR(50) NOT NULL,
+        target_user_id INT UNSIGNED NOT NULL,
+        target_username VARCHAR(50) NOT NULL,
+        technique TINYINT NOT NULL DEFAULT 3,
+        physical TINYINT NOT NULL DEFAULT 3,
+        tactics TINYINT NOT NULL DEFAULT 3,
+        defense TINYINT NOT NULL DEFAULT 3,
+        attitude TINYINT NOT NULL DEFAULT 3,
+        average_score DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        anonymous TINYINT NOT NULL DEFAULT 1,
+        status VARCHAR(20) NOT NULL DEFAULT 'valid',
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uk_sports_peer_game_rater_target (game_id, rater_user_id, target_user_id),
+        KEY idx_sports_peer_target (target_user_id),
+        KEY idx_sports_peer_game_target (game_id, target_user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_player_rating_summary (
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        self_score DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        peer_score DECIMAL(3,1) NULL,
+        composite_score DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        level_label VARCHAR(20) NOT NULL DEFAULT '进阶',
+        effective_peer_games INT UNSIGNED NOT NULL DEFAULT 0,
+        peer_rating_count INT UNSIGNED NOT NULL DEFAULT 0,
+        technique_self DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        physical_self DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        tactics_self DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        defense_self DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        attitude_self DECIMAL(3,1) NOT NULL DEFAULT 3.0,
+        technique_peer DECIMAL(3,1) NULL,
+        physical_peer DECIMAL(3,1) NULL,
+        tactics_peer DECIMAL(3,1) NULL,
+        defense_peer DECIMAL(3,1) NULL,
+        attitude_peer DECIMAL(3,1) NULL,
+        trend_json TEXT NULL,
+        update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_team (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        name VARCHAR(80) NOT NULL,
+        sport VARCHAR(20) NOT NULL DEFAULT 'football',
+        area VARCHAR(80) NOT NULL DEFAULT '江宁',
+        description VARCHAR(500) NOT NULL DEFAULT '',
+        captain_user_id INT UNSIGNED NOT NULL,
+        captain_username VARCHAR(50) NOT NULL,
+        member_limit INT UNSIGNED NOT NULL DEFAULT 20,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_team_area (area),
+        KEY idx_sports_team_captain (captain_user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_team_member (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        team_id INT UNSIGNED NOT NULL,
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        role VARCHAR(20) NOT NULL DEFAULT 'member',
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uk_sports_team_member (team_id, user_id),
+        KEY idx_sports_team_member_user (user_id),
+        CONSTRAINT fk_sports_team_member_team FOREIGN KEY (team_id) REFERENCES sports_team(id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_ai_clip_request (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        game_id INT UNSIGNED NULL,
+        video_url VARCHAR(600) NOT NULL DEFAULT '',
+        clip_type VARCHAR(40) NOT NULL DEFAULT 'goal_detection',
+        status VARCHAR(20) NOT NULL DEFAULT 'queued',
+        demo_result VARCHAR(500) NOT NULL DEFAULT '',
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_clip_user (user_id),
+        KEY idx_sports_clip_game (game_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS sports_data_upload (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        user_id INT UNSIGNED NOT NULL,
+        username VARCHAR(50) NOT NULL,
+        data_type VARCHAR(40) NOT NULL DEFAULT 'egocentric_video',
+        source VARCHAR(80) NOT NULL DEFAULT '',
+        consent_scope VARCHAR(120) NOT NULL DEFAULT 'training_anonymized',
+        note VARCHAR(500) NOT NULL DEFAULT '',
+        quality_score INT UNSIGNED NOT NULL DEFAULT 0,
+        reward_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        status VARCHAR(20) NOT NULL DEFAULT 'submitted',
+        create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_sports_data_upload_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `)
+
+    const [venueRows] = await pool.execute('SELECT COUNT(*) AS count FROM sports_venue')
+    if (Number(venueRows[0]?.count || 0) === 0) {
+      const venues = [
+        ['南师附中江宁分校球场', '南师附中江宁分校', '南京市江宁区吉印大道1999号', 31.8745600, 118.8282300, 'football,basketball', 0, 220, 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=1200&q=80', '["周五 18:00-21:00","周六 09:00-12:00","周日 15:00-18:00"]', 'approved', '校队 / 王老师'],
+        ['江宁大学城室内篮球馆', '江宁大学城', '南京市江宁区弘景大道大学城片区', 31.9159200, 118.9023500, 'basketball', 1, 180, 'https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1200&q=80', '["周一至周五 19:00-22:00","周六 10:00-22:00"]', 'approved', '李经理'],
+        ['未来科技城五人制足球馆', '江宁开发区', '南京市江宁区秣周东路12号', 31.8469200, 118.7832100, 'football', 1, 260, 'https://images.unsplash.com/photo-1431324155629-1a6deb1dec8d?auto=format&fit=crop&w=1200&q=80', '["周三 20:00-22:00","周六 18:00-22:00","周日 09:00-12:00"]', 'approved', '赵经理'],
+        ['百家湖运动中心', '百家湖', '南京市江宁区双龙大道1688号', 31.9296500, 118.8212400, 'football,basketball', 1, 200, 'https://images.unsplash.com/photo-1519861531473-9200262188bf?auto=format&fit=crop&w=1200&q=80', '["工作日 18:00-22:00","周末 08:00-22:00"]', 'pending', '待审核'],
+      ]
+      for (const venue of venues) {
+        await pool.execute(
+          'INSERT INTO sports_venue (name, area, address, lat, lng, sports, indoor, price_per_hour, cover_url, open_slots_json, status, contact) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          venue,
+        )
+      }
+    }
+
+    const [gameRows] = await pool.execute('SELECT COUNT(*) AS count FROM sports_game')
+    if (Number(gameRows[0]?.count || 0) === 0) {
+      await pool.execute(`
+        INSERT INTO sports_game (sport, title, venue_id, start_time, end_time, capacity, fee_per_person, notes, status)
+        SELECT 'football', '周六五人制热身局', id, DATE_ADD(NOW(), INTERVAL 2 DAY), DATE_ADD(DATE_ADD(NOW(), INTERVAL 2 DAY), INTERVAL 2 HOUR), 10, 36, '江宁大学城社团优先，缺前锋和门将。', 'open'
+        FROM sports_venue WHERE name = '未来科技城五人制足球馆' LIMIT 1
+      `)
+      await pool.execute(`
+        INSERT INTO sports_game (sport, title, venue_id, start_time, end_time, capacity, fee_per_person, notes, status)
+        SELECT 'basketball', '南师附中校友半场局', id, DATE_ADD(NOW(), INTERVAL 3 DAY), DATE_ADD(DATE_ADD(NOW(), INTERVAL 3 DAY), INTERVAL 90 MINUTE), 12, 25, '强度中等，先付后打，迟到请提前说。', 'open'
+        FROM sports_venue WHERE name = '南师附中江宁分校球场' LIMIT 1
+      `)
+      await pool.execute(`
+        INSERT INTO sports_game (sport, title, venue_id, start_time, end_time, capacity, fee_per_person, notes, status)
+        SELECT 'basketball', '周五晚室内 4v4', id, DATE_ADD(NOW(), INTERVAL 5 DAY), DATE_ADD(DATE_ADD(NOW(), INTERVAL 5 DAY), INTERVAL 2 HOUR), 8, 32, '室内空调，AA 包场。', 'open'
+        FROM sports_venue WHERE name = '江宁大学城室内篮球馆' LIMIT 1
+      `)
+    }
+    const [teamRows] = await pool.execute('SELECT COUNT(*) AS count FROM sports_team')
+    if (Number(teamRows[0]?.count || 0) === 0) {
+      const teams = [
+        ['南师附中校友足球队', 'football', '南师附中江宁分校', '每周固定训练，优先招中后场和门将。', 1, 'demo_player', 18],
+        ['江宁大学城篮球联队', 'basketball', '江宁大学城', '高校社团混合队，周五晚室内 4v4。', 1, 'demo_player', 16],
+      ]
+      for (const team of teams) {
+        const [result] = await pool.execute(
+          'INSERT INTO sports_team (name, sport, area, description, captain_user_id, captain_username, member_limit) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          team,
+        )
+        await pool.execute(
+          'INSERT IGNORE INTO sports_team_member (team_id, user_id, username, role) VALUES (?, ?, ?, "captain")',
+          [result.insertId, team[4], team[5]],
+        )
+      }
+    }
+    return pool
+  })()
+  return sportsSchemaPromise
+}
+
+const parseJsonList = (value) => {
+  try {
+    const parsed = JSON.parse(value || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const pad2 = (value) => String(value).padStart(2, '0')
+
+const formatDateOnly = (value) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+}
+
+const formatTimeOnly = (value) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+}
+
+const combineDateTime = (dateValue, timeValue) => {
+  if (!dateValue || !timeValue) return null
+  const [year, month, day] = String(dateValue).split('-').map((item) => Number(item))
+  const [hour, minute] = String(timeValue).split(':').map((item) => Number(item))
+  if (!year || !month || !day || Number.isNaN(hour) || Number.isNaN(minute)) return null
+  return new Date(year, month - 1, day, hour, minute, 0, 0)
+}
+
+const overlapsRange = (startA, endA, startB, endB) => {
+  const aStart = new Date(startA).getTime()
+  const aEnd = new Date(endA).getTime()
+  const bStart = new Date(startB).getTime()
+  const bEnd = new Date(endB).getTime()
+  if ([aStart, aEnd, bStart, bEnd].some((value) => Number.isNaN(value))) return false
+  return aStart < bEnd && aEnd > bStart
+}
+
+const bookingRangeLabel = (start, end) => `${formatTimeOnly(start)}-${formatTimeOnly(end)}`
+
+const requestUser = (req) => ({
+  id: Number(req.headers['x-user-id'] || 1) || 1,
+  username: text(req.headers['x-username'] || 'demo_player', 50) || 'demo_player',
+})
+
+const serializeVenue = (venue) => ({
+  ...venue,
+  lat: Number(venue.lat),
+  lng: Number(venue.lng),
+  indoor: Boolean(venue.indoor),
+  price_per_hour: Number(venue.price_per_hour),
+  sports: String(venue.sports || '').split(',').filter(Boolean),
+  open_slots: parseJsonList(venue.open_slots_json),
+  open_slot_ranges: parseJsonList(venue.open_slots_json).map((item) => {
+    const value = String(item || '')
+    const match = value.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/)
+    return {
+      label: value,
+      start: match ? `${pad2(match[1])}:${match[2]}` : '',
+      end: match ? `${pad2(match[3])}:${match[4]}` : '',
+    }
+  }),
+  photos: parseJsonList(venue.photos_json),
+})
+
+const serializeGame = (game) => ({
+  ...game,
+  capacity: Number(game.capacity),
+  fee_per_person: Number(game.fee_per_person),
+  joined_count: Number(game.joined_count || 0),
+  paid_count: Number(game.paid_count || 0),
+  checked_in_count: Number(game.checked_in_count || 0),
+  average_rating: game.average_rating == null ? null : Number(game.average_rating),
+  players: parseJsonList(game.players_json)
+    .filter(Boolean)
+    .map((player) => ({
+      ...player,
+      composite_score: Number(player.composite_score || 3),
+    })),
+  is_joined: Boolean(game.is_joined),
+})
+
+const ensureRatingSummary = async (pool, user) => {
+  const [[summary]] = await pool.execute(
+    'SELECT * FROM sports_player_rating_summary WHERE user_id = ? LIMIT 1',
+    [user.id],
+  )
+  if (summary) return summary
+  await pool.execute(
+    `INSERT INTO sports_player_rating_summary
+      (user_id, username, self_score, composite_score, level_label, technique_self, physical_self, tactics_self, defense_self, attitude_self)
+     VALUES (?, ?, 3.0, 3.0, '进阶', 3, 3, 3, 3, 3)`,
+    [user.id, user.username],
+  )
+  const [[created]] = await pool.execute('SELECT * FROM sports_player_rating_summary WHERE user_id = ? LIMIT 1', [user.id])
+  return created
+}
+
+const recalculatePlayerRating = async (pool, userId, username) => {
+  const [[self]] = await pool.execute(
+    'SELECT * FROM sports_player_self_rating WHERE user_id = ? LIMIT 1',
+    [userId],
+  )
+  const selfRating = self || {
+    technique: 3,
+    physical: 3,
+    tactics: 3,
+    defense: 3,
+    attitude: 3,
+    average_score: 3,
+  }
+  const [gameRows] = await pool.execute(
+    `SELECT game_id, COUNT(*) AS rating_count
+     FROM sports_player_peer_rating
+     WHERE target_user_id = ? AND status = 'valid'
+     GROUP BY game_id
+     HAVING COUNT(*) >= 3`,
+    [userId],
+  )
+  const gameIds = gameRows.map((row) => Number(row.game_id))
+  let peerStats = null
+  let trend = []
+  let peerRatingCount = 0
+
+  if (gameIds.length) {
+    const placeholders = gameIds.map(() => '?').join(',')
+    const [peerRows] = await pool.execute(
+      `SELECT * FROM sports_player_peer_rating
+       WHERE target_user_id = ? AND status = 'valid' AND game_id IN (${placeholders})
+       ORDER BY game_id, create_time`,
+      [userId, ...gameIds],
+    )
+    const byGame = new Map()
+    for (const row of peerRows) {
+      if (!byGame.has(row.game_id)) byGame.set(row.game_id, [])
+      byGame.get(row.game_id).push(row)
+    }
+    const trimmedRows = []
+    for (const [gameId, rows] of byGame.entries()) {
+      const sorted = [...rows].sort((a, b) => Number(a.average_score) - Number(b.average_score))
+      const effective = sorted.length > 2 ? sorted.slice(1, -1) : sorted
+      trimmedRows.push(...effective)
+      const avg = effective.reduce((sum, item) => sum + Number(item.average_score), 0) / effective.length
+      trend.push({ game_id: gameId, score: Math.round(avg * 10) / 10 })
+    }
+    peerRatingCount = peerRows.length
+    if (trimmedRows.length) {
+      peerStats = Object.fromEntries(ratingDimensions.map((key) => [
+        key,
+        Math.round((trimmedRows.reduce((sum, item) => sum + Number(item[key]), 0) / trimmedRows.length) * 10) / 10,
+      ]))
+      peerStats.average = Math.round((trimmedRows.reduce((sum, item) => sum + Number(item.average_score), 0) / trimmedRows.length) * 10) / 10
+    }
+  }
+
+  const selfScore = Number(selfRating.average_score || averageRating(selfRating))
+  const effectiveGames = gameIds.length
+  const peerWeight = peerStats ? Math.min(0.8, 0.7 + Math.max(0, effectiveGames - 10) * 0.01) : 0
+  const composite = peerStats
+    ? Math.round((selfScore * (1 - peerWeight) + peerStats.average * peerWeight) * 10) / 10
+    : selfScore
+  const level = ratingLabel(composite)
+
+  await pool.execute(
+    `INSERT INTO sports_player_rating_summary
+      (user_id, username, self_score, peer_score, composite_score, level_label, effective_peer_games, peer_rating_count,
+       technique_self, physical_self, tactics_self, defense_self, attitude_self,
+       technique_peer, physical_peer, tactics_peer, defense_peer, attitude_peer, trend_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       username = VALUES(username),
+       self_score = VALUES(self_score),
+       peer_score = VALUES(peer_score),
+       composite_score = VALUES(composite_score),
+       level_label = VALUES(level_label),
+       effective_peer_games = VALUES(effective_peer_games),
+       peer_rating_count = VALUES(peer_rating_count),
+       technique_self = VALUES(technique_self),
+       physical_self = VALUES(physical_self),
+       tactics_self = VALUES(tactics_self),
+       defense_self = VALUES(defense_self),
+       attitude_self = VALUES(attitude_self),
+       technique_peer = VALUES(technique_peer),
+       physical_peer = VALUES(physical_peer),
+       tactics_peer = VALUES(tactics_peer),
+       defense_peer = VALUES(defense_peer),
+       attitude_peer = VALUES(attitude_peer),
+       trend_json = VALUES(trend_json)`,
+    [
+      userId,
+      username,
+      selfScore,
+      peerStats?.average ?? null,
+      composite,
+      level,
+      effectiveGames,
+      peerRatingCount,
+      selfRating.technique,
+      selfRating.physical,
+      selfRating.tactics,
+      selfRating.defense,
+      selfRating.attitude,
+      peerStats?.technique ?? null,
+      peerStats?.physical ?? null,
+      peerStats?.tactics ?? null,
+      peerStats?.defense ?? null,
+      peerStats?.attitude ?? null,
+      JSON.stringify(trend.slice(-10)),
+    ],
+  )
+  const [[summary]] = await pool.execute('SELECT * FROM sports_player_rating_summary WHERE user_id = ? LIMIT 1', [userId])
+  return summary
+}
+
+const sportsSummaryForUser = async (pool, user) => {
+  const [records] = await pool.execute(
+    `SELECT
+      COUNT(*) AS played,
+      SUM(CASE WHEN no_show = 1 THEN 1 ELSE 0 END) AS no_shows,
+      SUM(CASE WHEN checked_in = 1 THEN 1 ELSE 0 END) AS checked_in
+    FROM sports_signup WHERE user_id = ?`,
+    [user.id],
+  )
+  const [creditRows] = await pool.execute(
+    'SELECT COALESCE(SUM(score_delta), 100) AS score FROM sports_credit_event WHERE user_id = ?',
+    [user.id],
+  )
+  return {
+    username: user.username,
+    played: Number(records[0]?.played || 0),
+    checked_in: Number(records[0]?.checked_in || 0),
+    no_shows: Number(records[0]?.no_shows || 0),
+    credit_score: Number(creditRows[0]?.score || 100),
+  }
+}
+
+const sportsProfileForUser = async (pool, user) => {
+  const rating = await ensureRatingSummary(pool, user)
+  const [orders] = await pool.execute(
+    `SELECT o.*, g.title, g.start_time, v.name AS venue_name
+     FROM sports_order o
+     LEFT JOIN sports_game g ON g.id = o.game_id
+     JOIN sports_venue v ON v.id = o.venue_id
+     WHERE o.user_id = ?
+     ORDER BY o.create_time DESC
+     LIMIT 50`,
+    [user.id],
+  )
+  const [credit] = await pool.execute(
+    'SELECT * FROM sports_credit_event WHERE user_id = ? ORDER BY create_time DESC LIMIT 30',
+    [user.id],
+  )
+  return {
+    summary: await sportsSummaryForUser(pool, user),
+    rating,
+    orders,
+    credit,
+  }
+}
+
+const sportsTeamsForUser = async (pool, user) => {
+  const [teams] = await pool.execute(
+    `SELECT t.*,
+      COUNT(m.id) AS member_count,
+      MAX(CASE WHEN m.user_id = ? THEN 1 ELSE 0 END) AS is_member
+     FROM sports_team t
+     LEFT JOIN sports_team_member m ON m.team_id = t.id AND m.status = 'active'
+     WHERE t.status = 'active'
+     GROUP BY t.id
+     ORDER BY t.create_time DESC`,
+    [user.id],
+  )
+  return teams.map((team) => ({
+    ...team,
+    member_count: Number(team.member_count || 0),
+    member_limit: Number(team.member_limit || 0),
+    is_member: Boolean(team.is_member),
+  }))
+}
+
+const sportsClipsForUser = async (pool, user) => {
+  const [clips] = await pool.execute(
+    `SELECT c.*, g.title AS game_title
+     FROM sports_ai_clip_request c
+     LEFT JOIN sports_game g ON g.id = c.game_id
+     WHERE c.user_id = ?
+     ORDER BY c.create_time DESC
+     LIMIT 20`,
+    [user.id],
+  )
+  return clips
+}
+
+const sportsUploadsForUser = async (pool, user) => {
+  const [uploads] = await pool.execute(
+    `SELECT *
+     FROM sports_data_upload
+     WHERE user_id = ?
+     ORDER BY create_time DESC
+     LIMIT 20`,
+    [user.id],
+  )
+  return uploads
+}
+
+const publicPlayerProfile = async (pool, userId, viewer) => {
+  const [[account]] = await pool.execute('SELECT id, username FROM `user` WHERE id = ? LIMIT 1', [userId])
+  const [[signupName]] = account ? [[]] : await pool.execute(
+    'SELECT user_id AS id, username FROM sports_signup WHERE user_id = ? ORDER BY create_time DESC LIMIT 1',
+    [userId],
+  )
+  const player = account || signupName
+  if (!player) return null
+  const rating = await ensureRatingSummary(pool, { id: Number(player.id), username: player.username })
+  const [records] = await pool.execute(
+    `SELECT
+      COUNT(*) AS played,
+      SUM(CASE WHEN checked_in = 1 THEN 1 ELSE 0 END) AS checked_in,
+      SUM(CASE WHEN no_show = 1 THEN 1 ELSE 0 END) AS no_shows
+     FROM sports_signup WHERE user_id = ?`,
+    [userId],
+  )
+  const isSelf = Number(viewer.id) === Number(userId)
+  return {
+    user_id: Number(userId),
+    username: player.username,
+    played: Number(records[0]?.played || 0),
+    checked_in: Number(records[0]?.checked_in || 0),
+    no_shows: Number(records[0]?.no_shows || 0),
+    is_self: isSelf,
+    rating: isSelf ? rating : {
+      user_id: rating.user_id,
+      username: rating.username,
+      self_score: rating.self_score,
+      peer_score: rating.peer_score,
+      composite_score: rating.composite_score,
+      level_label: rating.level_label,
+      effective_peer_games: rating.effective_peer_games,
+      peer_rating_count: rating.peer_rating_count,
+      update_time: rating.update_time,
+    },
+  }
+}
+
+const gameRatingContext = async (pool, gameId, user) => {
+  const [[game]] = await pool.execute(
+    `SELECT g.*, v.name AS venue_name, v.area, v.address
+     FROM sports_game g
+     JOIN sports_venue v ON v.id = g.venue_id
+     WHERE g.id = ? LIMIT 1`,
+    [gameId],
+  )
+  if (!game) return null
+  const [players] = await pool.execute(
+    `SELECT s.user_id, s.username, s.checked_in, r.composite_score, r.level_label, r.peer_rating_count
+     FROM sports_signup s
+     LEFT JOIN sports_player_rating_summary r ON r.user_id = s.user_id
+     WHERE s.game_id = ?
+     ORDER BY s.create_time ASC`,
+    [gameId],
+  )
+  const [[mySignup]] = await pool.execute(
+    'SELECT * FROM sports_signup WHERE game_id = ? AND user_id = ? LIMIT 1',
+    [gameId, user.id],
+  )
+  const now = Date.now()
+  const endAt = new Date(game.end_time).getTime()
+  const reviewOpen = Boolean(mySignup?.checked_in) && now >= endAt && now <= endAt + 24 * 60 * 60 * 1000
+  const [existing] = await pool.execute(
+    'SELECT target_user_id FROM sports_player_peer_rating WHERE game_id = ? AND rater_user_id = ?',
+    [gameId, user.id],
+  )
+  return {
+    game,
+    players: players.map((player) => ({
+      ...player,
+      composite_score: Number(player.composite_score || 3),
+      level_label: player.level_label || '进阶',
+      peer_rating_count: Number(player.peer_rating_count || 0),
+    })),
+    review_open: reviewOpen,
+    reviewed_target_ids: existing.map((item) => Number(item.target_user_id)),
+  }
+}
+
+const venueAvailability = async (pool, venueId, dateValue) => {
+  const [[venue]] = await pool.execute('SELECT * FROM sports_venue WHERE id = ? LIMIT 1', [venueId])
+  if (!venue) return null
+  const openSlots = parseJsonList(venue.open_slots_json)
+  const day = dateValue ? new Date(dateValue) : new Date()
+  if (Number.isNaN(day.getTime())) return null
+  const dayLabel = formatDateOnly(day)
+  const [orders] = await pool.execute(
+    `SELECT o.*, g.start_time, g.end_time
+     FROM sports_order o
+     LEFT JOIN sports_game g ON g.id = o.game_id
+     WHERE o.venue_id = ? AND DATE(o.create_time) = ?`,
+    [venueId, dayLabel],
+  )
+  return {
+    venue: serializeVenue(venue),
+    date: dayLabel,
+    slots: openSlots.map((slot, index) => {
+      const match = String(slot || '').match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/)
+      const start = match ? combineDateTime(dayLabel, `${pad2(match[1])}:${match[2]}`) : null
+      const end = match ? combineDateTime(dayLabel, `${pad2(match[3])}:${match[4]}`) : null
+      const occupied = start && end
+        ? orders.some((order) => order.start_time && order.end_time && overlapsRange(start, end, order.start_time, order.end_time))
+        : false
+      return {
+        id: `${venueId}-${index}`,
+        label: String(slot || '').trim(),
+        start: start ? `${formatTimeOnly(start)}` : '',
+        end: end ? `${formatTimeOnly(end)}` : '',
+        occupied,
+      }
+    }),
+  }
+}
+
+const sportsMetrics = async (pool) => {
+  const [[daily]] = await pool.execute(`
+    SELECT
+      (SELECT COUNT(*) FROM sports_order WHERE DATE(create_time) = CURRENT_DATE()) AS today_orders,
+      (SELECT COALESCE(SUM(amount), 0) FROM sports_order WHERE DATE(create_time) = CURRENT_DATE()) AS today_income,
+      (SELECT COUNT(*) FROM sports_game WHERE DATE(create_time) = CURRENT_DATE()) AS today_games,
+      (SELECT COUNT(DISTINCT user_id) FROM sports_signup WHERE create_time >= DATE_SUB(NOW(), INTERVAL 7 DAY)) AS wau,
+      (SELECT COUNT(*) FROM sports_game) AS total_games,
+      (SELECT COALESCE(SUM(amount), 0) FROM sports_order) AS gmv,
+      (SELECT COUNT(*) FROM sports_venue WHERE status = 'approved') AS approved_venues,
+      (SELECT COUNT(*) FROM sports_signup WHERE no_show = 1) AS no_show_count,
+      (SELECT COUNT(*) FROM sports_signup) AS signup_count
+  `)
+  const signups = Number(daily.signup_count || 0)
+  return {
+    today_orders: Number(daily.today_orders || 0),
+    today_income: Number(daily.today_income || 0),
+    today_games: Number(daily.today_games || 0),
+    wau: Number(daily.wau || 0),
+    total_games: Number(daily.total_games || 0),
+    gmv: Number(daily.gmv || 0),
+    approved_venues: Number(daily.approved_venues || 0),
+    no_show_rate: signups ? Math.round(Number(daily.no_show_count || 0) / signups * 1000) / 10 : 0,
+  }
+}
+
+const handleSportsApi = async (req, res, requestUrl) => {
+  const pathName = requestUrl.pathname
+  if (!pathName.startsWith('/api/sports-app/')) return false
+  try {
+    const pool = await ensureSportsSchema()
+    const user = requestUser(req)
+
+    if (pathName === '/api/sports-app/venues' && req.method === 'GET') {
+      const [rows] = await pool.execute('SELECT * FROM sports_venue ORDER BY status = "approved" DESC, create_time DESC')
+      return json(res, rows.map(serializeVenue))
+    }
+
+    if (pathName === '/api/sports-app/teams' && req.method === 'GET') {
+      return json(res, await sportsTeamsForUser(pool, user))
+    }
+
+    if (pathName === '/api/sports-app/teams' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const [result] = await pool.execute(
+        `INSERT INTO sports_team
+          (name, sport, area, description, captain_user_id, captain_username, member_limit)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          text(body.name, 80) || `${user.username} 的球队`,
+          text(body.sport, 20) || 'football',
+          text(body.area, 80) || '江宁大学城',
+          text(body.description, 500) || '固定约球训练，欢迎同水平球友加入。',
+          user.id,
+          user.username,
+          Number(body.member_limit || 20),
+        ],
+      )
+      await pool.execute(
+        'INSERT INTO sports_team_member (team_id, user_id, username, role) VALUES (?, ?, ?, "captain")',
+        [result.insertId, user.id, user.username],
+      )
+      return json(res, { ok: true, id: result.insertId }, 201)
+    }
+
+    const joinTeamMatch = pathName.match(/^\/api\/sports-app\/teams\/(\d+)\/join$/)
+    if (joinTeamMatch && req.method === 'POST') {
+      const teamId = Number(joinTeamMatch[1])
+      const [[team]] = await pool.execute(
+        `SELECT t.*, COUNT(m.id) AS member_count
+         FROM sports_team t
+         LEFT JOIN sports_team_member m ON m.team_id = t.id AND m.status = 'active'
+         WHERE t.id = ? AND t.status = 'active'
+         GROUP BY t.id
+         LIMIT 1`,
+        [teamId],
+      )
+      if (!team) return json(res, { ok: false, error: 'team not found' }, 404)
+      if (Number(team.member_count || 0) >= Number(team.member_limit || 0)) {
+        return json(res, { ok: false, error: '球队已满员' }, 409)
+      }
+      await pool.execute(
+        'INSERT IGNORE INTO sports_team_member (team_id, user_id, username, role) VALUES (?, ?, ?, "member")',
+        [teamId, user.id, user.username],
+      )
+      return json(res, { ok: true })
+    }
+
+    if (pathName === '/api/sports-app/ai-clips' && req.method === 'GET') {
+      return json(res, await sportsClipsForUser(pool, user))
+    }
+
+    if (pathName === '/api/sports-app/ai-clips' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const demoResult = 'Demo 队列已生成：进球识别、出界片段、高光封面会在样板场馆摄像头接入后自动替换为真实结果。'
+      const [result] = await pool.execute(
+        `INSERT INTO sports_ai_clip_request
+          (user_id, username, game_id, video_url, clip_type, status, demo_result)
+         VALUES (?, ?, ?, ?, ?, 'queued', ?)`,
+        [
+          user.id,
+          user.username,
+          body.game_id ? Number(body.game_id) : null,
+          text(body.video_url, 600),
+          text(body.clip_type, 40) || 'goal_detection',
+          demoResult,
+        ],
+      )
+      return json(res, { ok: true, id: result.insertId, demo_result: demoResult }, 201)
+    }
+
+    if (pathName === '/api/sports-app/data-uploads' && req.method === 'GET') {
+      return json(res, await sportsUploadsForUser(pool, user))
+    }
+
+    if (pathName === '/api/sports-app/data-uploads' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const note = text(body.note, 500)
+      const qualityScore = Math.min(95, Math.max(60, 70 + Math.round(note.length / 12)))
+      const [result] = await pool.execute(
+        `INSERT INTO sports_data_upload
+          (user_id, username, data_type, source, consent_scope, note, quality_score)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          user.id,
+          user.username,
+          text(body.data_type, 40) || 'egocentric_video',
+          text(body.source, 80) || '手机/运动相机',
+          text(body.consent_scope, 120) || 'training_anonymized',
+          note,
+          qualityScore,
+        ],
+      )
+      return json(res, { ok: true, id: result.insertId, quality_score: qualityScore }, 201)
+    }
+
+    if (pathName === '/api/sports-app/rating/self' && req.method === 'GET') {
+      return json(res, await ensureRatingSummary(pool, user))
+    }
+
+    if (pathName === '/api/sports-app/rating/self' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const rating = normalizeRatingBody(body)
+      const average = averageRating(rating)
+      const [[existing]] = await pool.execute('SELECT * FROM sports_player_self_rating WHERE user_id = ? LIMIT 1', [user.id])
+      if (existing) {
+        const windowStart = new Date(existing.window_start).getTime()
+        const inWindow = Date.now() - windowStart < 7 * 24 * 60 * 60 * 1000
+        if (inWindow && Number(existing.edit_count_window || 0) >= 1) {
+          return json(res, { ok: false, error: '自评提交后 7 天内仅可修改 1 次' }, 429)
+        }
+        await pool.execute(
+          `UPDATE sports_player_self_rating SET
+            username = ?, technique = ?, physical = ?, tactics = ?, defense = ?, attitude = ?, average_score = ?,
+            edit_count_window = ?, window_start = ?
+           WHERE user_id = ?`,
+          [
+            user.username,
+            rating.technique,
+            rating.physical,
+            rating.tactics,
+            rating.defense,
+            rating.attitude,
+            average,
+            inWindow ? Number(existing.edit_count_window || 0) + 1 : 0,
+            inWindow ? existing.window_start : new Date(),
+            user.id,
+          ],
+        )
+      } else {
+        await pool.execute(
+          `INSERT INTO sports_player_self_rating
+            (user_id, username, technique, physical, tactics, defense, attitude, average_score, edit_count_window)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          [user.id, user.username, rating.technique, rating.physical, rating.tactics, rating.defense, rating.attitude, average],
+        )
+      }
+      const summary = await recalculatePlayerRating(pool, user.id, user.username)
+      return json(res, { ok: true, summary })
+    }
+
+    const playerProfileMatch = pathName.match(/^\/api\/sports-app\/players\/(\d+)$/)
+    if (playerProfileMatch && req.method === 'GET') {
+      const profile = await publicPlayerProfile(pool, Number(playerProfileMatch[1]), user)
+      if (!profile) return json(res, { ok: false, error: 'player not found' }, 404)
+      return json(res, profile)
+    }
+
+    if (pathName === '/api/sports-app/venues' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const sports = Array.isArray(body.sports) ? body.sports.join(',') : text(body.sports, 80)
+      const [result] = await pool.execute(
+        `INSERT INTO sports_venue
+          (name, area, address, lat, lng, sports, indoor, price_per_hour, cover_url, open_slots_json, status, contact, manager_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        [
+          text(body.name, 100),
+          text(body.area, 80) || '江宁',
+          text(body.address, 255),
+          Number(body.lat || 31.91),
+          Number(body.lng || 118.84),
+          sports || 'football,basketball',
+          body.indoor ? 1 : 0,
+          Number(body.price_per_hour || 0),
+          text(body.cover_url, 600),
+          JSON.stringify(Array.isArray(body.open_slots) ? body.open_slots : []),
+          text(body.contact, 80) || user.username,
+          user.id,
+        ],
+      )
+      return json(res, { ok: true, id: result.insertId }, 201)
+    }
+
+    const venueBookMatch = pathName.match(/^\/api\/sports-app\/venues\/(\d+)\/book$/)
+    if (venueBookMatch && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const venueId = Number(venueBookMatch[1])
+      const [[venue]] = await pool.execute('SELECT * FROM sports_venue WHERE id = ? LIMIT 1', [venueId])
+      if (!venue) return json(res, { ok: false, error: 'venue not found' }, 404)
+      const bookingDate = text(body.booking_date, 20)
+      const bookingStartTime = text(body.booking_start_time, 10)
+      const bookingEndTime = text(body.booking_end_time, 10)
+      const bookingStart = combineDateTime(bookingDate, bookingStartTime)
+      const bookingEnd = combineDateTime(bookingDate, bookingEndTime)
+      if (!bookingStart || !bookingEnd || bookingEnd <= bookingStart) {
+        return json(res, { ok: false, error: '请选择有效的日期和时段' }, 400)
+      }
+      const bookingLabel = bookingRangeLabel(bookingStart, bookingEnd)
+      const [conflicts] = await pool.execute(
+        `SELECT o.id, o.game_id, o.create_time, o.booking_start_time, o.booking_end_time, g.start_time, g.end_time
+         FROM sports_order o
+         LEFT JOIN sports_game g ON g.id = o.game_id
+         WHERE o.venue_id = ? AND o.status <> 'cancelled'`,
+        [venueId],
+      )
+      const hasConflict = conflicts.some((order) => {
+        const existingStart = order.game_id && order.start_time ? order.start_time : null
+        const existingEnd = order.game_id && order.end_time ? order.end_time : null
+        const orderStart = existingStart || order.booking_start_time || order.create_time
+        const orderEnd = existingEnd || order.booking_end_time || new Date(new Date(order.create_time).getTime() + 60 * 60 * 1000)
+        return overlapsRange(bookingStart, bookingEnd, orderStart, orderEnd)
+      })
+      if (hasConflict) {
+        return json(res, { ok: false, error: '该时段已被占用，请换一个时间段' }, 409)
+      }
+      const amountHours = Math.max(1, Math.round((bookingEnd - bookingStart) / (60 * 60 * 1000)))
+      const amount = Number(venue.price_per_hour || 0) * amountHours
+      const checkinCode = String(100000 + Math.floor(Math.random() * 900000))
+      const [result] = await pool.execute(
+        'INSERT INTO sports_order (venue_id, game_id, user_id, username, amount, status, checkin_code, booking_start_time, booking_end_time) VALUES (?, NULL, ?, ?, ?, "paid", ?, ?, ?)',
+        [venueId, user.id, user.username, amount, checkinCode, bookingStart, bookingEnd],
+      )
+      return json(res, {
+        ok: true,
+        order_id: result.insertId,
+        checkin_code: checkinCode,
+        amount,
+        booking_range: bookingLabel,
+        booking_date: bookingDate,
+        booking_start_time: bookingStartTime,
+        booking_end_time: bookingEndTime,
+      }, 201)
+    }
+
+    const venueMatch = pathName.match(/^\/api\/sports-app\/venues\/(\d+)$/)
+    if (venueMatch && req.method === 'PATCH') {
+      const body = await readJsonBody(req)
+      await pool.execute(
+        `UPDATE sports_venue SET
+          name = COALESCE(NULLIF(?, ''), name),
+          area = COALESCE(NULLIF(?, ''), area),
+          address = COALESCE(NULLIF(?, ''), address),
+          price_per_hour = COALESCE(?, price_per_hour),
+          status = COALESCE(NULLIF(?, ''), status),
+          contact = COALESCE(NULLIF(?, ''), contact)
+         WHERE id = ?`,
+        [
+          text(body.name, 100),
+          text(body.area, 80),
+          text(body.address, 255),
+          body.price_per_hour === undefined ? null : Number(body.price_per_hour),
+          text(body.status, 20),
+          text(body.contact, 80),
+          Number(venueMatch[1]),
+        ],
+      )
+      return json(res, { ok: true })
+    }
+
+    if (pathName === '/api/sports-app/games' && req.method === 'GET') {
+      const [rows] = await pool.execute(
+        `SELECT g.*, v.name AS venue_name, v.area, v.address, v.cover_url,
+          COUNT(s.id) AS joined_count,
+          SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+          SUM(CASE WHEN s.checked_in = 1 THEN 1 ELSE 0 END) AS checked_in_count,
+          MAX(CASE WHEN s.user_id = ? THEN 1 ELSE 0 END) AS is_joined,
+          ROUND(AVG(rs.composite_score), 1) AS average_rating,
+          COALESCE(JSON_ARRAYAGG(
+            CASE WHEN s.id IS NULL THEN NULL ELSE JSON_OBJECT(
+              'user_id', s.user_id,
+              'username', s.username,
+              'level_label', COALESCE(rs.level_label, '进阶'),
+              'composite_score', COALESCE(rs.composite_score, 3.0)
+            ) END
+          ), JSON_ARRAY()) AS players_json
+         FROM sports_game g
+         JOIN sports_venue v ON v.id = g.venue_id
+         LEFT JOIN sports_signup s ON s.game_id = g.id
+         LEFT JOIN sports_player_rating_summary rs ON rs.user_id = s.user_id
+         WHERE g.status <> 'cancelled'
+         GROUP BY g.id
+         ORDER BY g.start_time ASC`,
+        [user.id],
+      )
+      return json(res, rows.map(serializeGame))
+    }
+
+    if (pathName === '/api/sports-app/games' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const [result] = await pool.execute(
+        `INSERT INTO sports_game
+          (sport, title, venue_id, start_time, end_time, capacity, fee_per_person, notes, creator_user_id, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
+        [
+          text(body.sport, 20) || 'football',
+          text(body.title, 120) || '南京同城约球',
+          Number(body.venue_id),
+          text(body.start_time, 40),
+          text(body.end_time, 40),
+          Number(body.capacity || 10),
+          Number(body.fee_per_person || 0),
+          text(body.notes, 500),
+          user.id,
+        ],
+      )
+      await pool.execute(
+        'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note, related_game_id) VALUES (?, ?, "create_game", 2, "发起真实球局", ?)',
+        [user.id, user.username, result.insertId],
+      )
+      return json(res, { ok: true, id: result.insertId }, 201)
+    }
+
+    const joinMatch = pathName.match(/^\/api\/sports-app\/games\/(\d+)\/join$/)
+    if (joinMatch && req.method === 'POST') {
+      const gameId = Number(joinMatch[1])
+      const [[game]] = await pool.execute(
+        'SELECT g.*, v.id AS venue_id FROM sports_game g JOIN sports_venue v ON v.id = g.venue_id WHERE g.id = ? LIMIT 1',
+        [gameId],
+      )
+      if (!game) return json(res, { ok: false, error: 'game not found' }, 404)
+
+      try {
+        await pool.execute(
+          'INSERT INTO sports_signup (game_id, user_id, username, paid_amount, payment_status) VALUES (?, ?, ?, ?, "paid")',
+          [gameId, user.id, user.username, Number(game.fee_per_person || 0)],
+        )
+      } catch (error) {
+        if (error?.code !== 'ER_DUP_ENTRY') throw error
+      }
+      const checkinCode = String(100000 + Math.floor(Math.random() * 900000))
+      const [orderResult] = await pool.execute(
+        'INSERT INTO sports_order (venue_id, game_id, user_id, username, amount, status, checkin_code) VALUES (?, ?, ?, ?, ?, "paid", ?)',
+        [game.venue_id, gameId, user.id, user.username, Number(game.fee_per_person || 0), checkinCode],
+      )
+      await pool.execute(
+        'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note, related_game_id) VALUES (?, ?, "paid_signup", 1, "报名并完成支付", ?)',
+        [user.id, user.username, gameId],
+      )
+      return json(res, { ok: true, order_id: orderResult.insertId, checkin_code: checkinCode })
+    }
+
+    const gameDetailMatch = pathName.match(/^\/api\/sports-app\/games\/(\d+)$/)
+    if (gameDetailMatch && req.method === 'GET') {
+      const detail = await gameRatingContext(pool, Number(gameDetailMatch[1]), user)
+      if (!detail) return json(res, { ok: false, error: 'game not found' }, 404)
+      return json(res, detail)
+    }
+
+    const gameReviewMatch = pathName.match(/^\/api\/sports-app\/games\/(\d+)\/reviews$/)
+    if (gameReviewMatch && req.method === 'POST') {
+      const gameId = Number(gameReviewMatch[1])
+      const detail = await gameRatingContext(pool, gameId, user)
+      if (!detail) return json(res, { ok: false, error: 'game not found' }, 404)
+      if (!detail.review_open) return json(res, { ok: false, error: '互评入口未开放或已超时' }, 403)
+      const body = await readJsonBody(req)
+      const reviews = Array.isArray(body.reviews) ? body.reviews : []
+      const checkedInTargets = new Map(detail.players.filter((player) => Number(player.checked_in) === 1).map((player) => [Number(player.user_id), player]))
+      const savedTargets = []
+      for (const review of reviews) {
+        const targetId = Number(review.target_user_id)
+        const target = checkedInTargets.get(targetId)
+        if (!target || targetId === user.id) continue
+        const rating = normalizeRatingBody(review)
+        const average = averageRating(rating)
+        try {
+          await pool.execute(
+            `INSERT INTO sports_player_peer_rating
+              (game_id, rater_user_id, rater_username, target_user_id, target_username,
+               technique, physical, tactics, defense, attitude, average_score, anonymous)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              gameId,
+              user.id,
+              user.username,
+              targetId,
+              target.username,
+              rating.technique,
+              rating.physical,
+              rating.tactics,
+              rating.defense,
+              rating.attitude,
+              average,
+              review.anonymous === false ? 0 : 1,
+            ],
+          )
+          savedTargets.push({ id: targetId, username: target.username })
+        } catch (error) {
+          if (error?.code !== 'ER_DUP_ENTRY') throw error
+        }
+      }
+      for (const target of savedTargets) {
+        await recalculatePlayerRating(pool, target.id, target.username)
+      }
+      return json(res, { ok: true, saved: savedTargets.length })
+    }
+
+    if (pathName === '/api/sports-app/me' && req.method === 'GET') return json(res, await sportsProfileForUser(pool, user))
+
+    if (pathName === '/api/sports-app/orders' && req.method === 'GET') {
+      const [orders] = await pool.execute(
+        `SELECT o.*, g.title, g.start_time, v.name AS venue_name
+         FROM sports_order o
+         LEFT JOIN sports_game g ON g.id = o.game_id
+         JOIN sports_venue v ON v.id = o.venue_id
+         ORDER BY o.create_time DESC
+         LIMIT 100`,
+      )
+      return json(res, orders)
+    }
+
+    const checkinMatch = pathName.match(/^\/api\/sports-app\/orders\/(\d+)\/checkin$/)
+    if (checkinMatch && req.method === 'POST') {
+      const orderId = Number(checkinMatch[1])
+      const [[order]] = await pool.execute('SELECT * FROM sports_order WHERE id = ? LIMIT 1', [orderId])
+      if (!order) return json(res, { ok: false, error: 'order not found' }, 404)
+      await pool.execute('UPDATE sports_order SET status = "checked_in", checked_in_at = NOW() WHERE id = ?', [orderId])
+      if (order.game_id) {
+        await pool.execute('UPDATE sports_signup SET checked_in = 1 WHERE game_id = ? AND user_id = ?', [order.game_id, order.user_id])
+        await pool.execute(
+          'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note, related_game_id) VALUES (?, ?, "checkin", 3, "到场核销", ?)',
+          [order.user_id, order.username, order.game_id],
+        )
+      }
+      return json(res, { ok: true })
+    }
+
+    if (pathName === '/api/sports-app/admin/metrics' && req.method === 'GET') {
+      return json(res, await sportsMetrics(pool))
+    }
+
+    if (pathName === '/api/sports-app/admin/users' && req.method === 'GET') {
+      const [users] = await pool.execute(
+        `SELECT u.id, u.username, u.status, u.create_time,
+          COUNT(s.id) AS joined_games,
+          SUM(CASE WHEN s.no_show = 1 THEN 1 ELSE 0 END) AS no_shows,
+          COALESCE(SUM(c.score_delta), 100) AS credit_score
+         FROM user u
+         LEFT JOIN sports_signup s ON s.user_id = u.id
+         LEFT JOIN sports_credit_event c ON c.user_id = u.id
+         GROUP BY u.id
+         ORDER BY u.create_time DESC
+         LIMIT 100`,
+      )
+      return json(res, users.map((item) => ({
+        ...item,
+        joined_games: Number(item.joined_games || 0),
+        no_shows: Number(item.no_shows || 0),
+        credit_score: Number(item.credit_score || 100),
+      })))
+    }
+
+    if (pathName === '/api/sports-app/admin/ratings' && req.method === 'GET') {
+      const [rows] = await pool.execute(
+        `SELECT * FROM sports_player_rating_summary
+         ORDER BY composite_score DESC, peer_rating_count DESC
+         LIMIT 100`,
+      )
+      return json(res, rows)
+    }
+
+    const userStatusMatch = pathName.match(/^\/api\/sports-app\/admin\/users\/(\d+)\/status$/)
+    if (userStatusMatch && req.method === 'PATCH') {
+      const body = await readJsonBody(req)
+      const status = Number(body.status) === 0 ? 0 : 1
+      await pool.execute('UPDATE user SET status = ? WHERE id = ?', [status, Number(userStatusMatch[1])])
+      return json(res, { ok: true })
+    }
+
+    const resetRatingMatch = pathName.match(/^\/api\/sports-app\/admin\/ratings\/(\d+)\/reset$/)
+    if (resetRatingMatch && req.method === 'POST') {
+      const targetId = Number(resetRatingMatch[1])
+      await pool.execute('DELETE FROM sports_player_peer_rating WHERE target_user_id = ? OR rater_user_id = ?', [targetId, targetId])
+      await pool.execute('DELETE FROM sports_player_self_rating WHERE user_id = ?', [targetId])
+      await pool.execute('DELETE FROM sports_player_rating_summary WHERE user_id = ?', [targetId])
+      return json(res, { ok: true })
+    }
+
+    if (pathName === '/api/sports-app/bootstrap' && req.method === 'GET') {
+      const [venues] = await pool.execute('SELECT * FROM sports_venue ORDER BY status = "approved" DESC, create_time DESC')
+      const [games] = await pool.execute(
+        `SELECT g.*, v.name AS venue_name, v.area, v.address, v.cover_url,
+          COUNT(s.id) AS joined_count,
+          SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+          SUM(CASE WHEN s.checked_in = 1 THEN 1 ELSE 0 END) AS checked_in_count,
+          MAX(CASE WHEN s.user_id = ? THEN 1 ELSE 0 END) AS is_joined,
+          ROUND(AVG(rs.composite_score), 1) AS average_rating,
+          COALESCE(JSON_ARRAYAGG(
+            CASE WHEN s.id IS NULL THEN NULL ELSE JSON_OBJECT(
+              'user_id', s.user_id,
+              'username', s.username,
+              'level_label', COALESCE(rs.level_label, '进阶'),
+              'composite_score', COALESCE(rs.composite_score, 3.0)
+            ) END
+          ), JSON_ARRAY()) AS players_json
+         FROM sports_game g
+         JOIN sports_venue v ON v.id = g.venue_id
+         LEFT JOIN sports_signup s ON s.game_id = g.id
+         LEFT JOIN sports_player_rating_summary rs ON rs.user_id = s.user_id
+         WHERE g.status <> 'cancelled'
+         GROUP BY g.id
+         ORDER BY g.start_time ASC`,
+        [user.id],
+      )
+      return json(res, {
+        venues: venues.map(serializeVenue),
+        games: games.map(serializeGame),
+        ...(await sportsProfileForUser(pool, user)),
+        teams: await sportsTeamsForUser(pool, user),
+        clips: await sportsClipsForUser(pool, user),
+        uploads: await sportsUploadsForUser(pool, user),
+        metrics: await sportsMetrics(pool),
+      })
+    }
+
+    return json(res, { ok: false, error: 'sports endpoint not found' }, 404)
+  } catch (error) {
+    console.error('[sports-app] error', error)
+    return json(res, { ok: false, error: error instanceof Error ? error.message : 'sports api failed' }, 500)
+  }
+}
+
+const handleAuthApi = async (req, res, pathName) => {
+  if (!pathName.startsWith('/api/auth/')) return false
+  try {
+    if (pathName === '/api/auth/login' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const username = text(body.username || body.email, 50)
+      const password = String(body.password || '')
+      if (!username || !password) return json(res, { ok: false, error: 'username and password are required' }, 400)
+
+      const pool = await getDbPool()
+      const [rows] = await pool.execute(
+        'SELECT id, username, password_hash, status FROM `user` WHERE username = ? LIMIT 1',
+        [username],
+      )
+      const user = rows[0]
+      if (!user || Number(user.status) !== 1) {
+        return json(res, { ok: false, error: 'Invalid username or password' }, 401)
+      }
+
+      const passwordOk = await bcrypt.compare(password, user.password_hash)
+      if (!passwordOk) {
+        return json(res, { ok: false, error: 'Invalid username or password' }, 401)
+      }
+
+      return json(res, { ok: true, user: publicAuthUser(user) })
+    }
+
+    if (pathName === '/api/auth/register' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      const username = text(body.username || body.email, 50)
+      const password = String(body.password || '')
+      if (!username || !password) return json(res, { ok: false, error: 'username and password are required' }, 400)
+      if (password.length < 6) return json(res, { ok: false, error: 'password must be at least 6 characters' }, 400)
+
+      const passwordHash = await bcrypt.hash(password, 12)
+      const pool = await getDbPool()
+      try {
+        const [result] = await pool.execute(
+          'INSERT INTO `user` (username, password_hash, status) VALUES (?, ?, 1)',
+          [username, passwordHash],
+        )
+        return json(res, { ok: true, user: publicAuthUser({ id: result.insertId, username }) }, 201)
+      } catch (error) {
+        if (error?.code === 'ER_DUP_ENTRY') {
+          return json(res, { ok: false, error: 'username already exists' }, 409)
+        }
+        throw error
+      }
+    }
+
+    return json(res, { ok: false, error: 'auth endpoint not found' }, 404)
+  } catch (error) {
+    console.error('[auth] error', error)
+    return json(res, { ok: false, error: error instanceof Error ? error.message : 'auth failed' }, 500)
+  }
+}
 
 const readDotEnv = async (file) => {
   try {
@@ -358,6 +1777,10 @@ const mockApi = async (req, res, requestUrl) => {
     return true
   }
 
+  const pathName = requestUrl.pathname
+  if (await handleAuthApi(req, res, pathName)) return true
+  if (await handleSportsApi(req, res, requestUrl)) return true
+
   const now = new Date().toISOString()
   const merchant = {
     id: 'local-merchant',
@@ -394,7 +1817,6 @@ const mockApi = async (req, res, requestUrl) => {
     stats: { active_tasks: 0, valid_submissions: 0, total_spent: 0 },
   }
 
-  const pathName = requestUrl.pathname
   if (pathName === '/api/module-agent-launch/chat' && req.method === 'POST') {
     const startedAt = Date.now()
     try {

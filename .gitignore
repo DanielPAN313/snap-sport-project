@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.server
+mirror-*.log
+tunnel*.log
+tunnel*.txt
+reference-ui.mp4
+reference_frames/
+exports/
+exports.zip
+*.zip
