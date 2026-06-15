@@ -166,23 +166,6 @@
     var session = getSession();
     if (!session) return;
     syncLegacyAuth(session);
-    var bar = document.createElement('div');
-    bar.className = 'local-auth-userbar';
-    bar.setAttribute('data-local-auth-userbar', 'true');
-    bar.innerHTML = [
-      '<div>',
-      '  <strong>' + escapeHtml(session.name || session.email) + '</strong>',
-      '  <span>' + escapeHtml(session.role || 'merchant') + ' / signed in</span>',
-      '</div>',
-      '<button class="local-auth-logout" type="button">Logout</button>',
-    ].join('');
-    bar.querySelector('button').addEventListener('click', function () {
-      clearSession();
-      bar.remove();
-      renderOverlay('login');
-      window.dispatchEvent(new Event('another-me-auth-change'));
-    });
-    document.body.appendChild(bar);
   }
 
   function escapeHtml(value) {

@@ -78,6 +78,15 @@ button {
   backdrop-filter: blur(14px);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -126,6 +135,50 @@ button {
   color: var(--green-dark);
   border-color: var(--lime);
   background: var(--lime);
+}
+
+.topbar-home {
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.session-chip {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.session-chip strong {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.session-chip span {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+}
+
+.return-home-fab {
+  position: fixed;
+  left: max(18px, 5vw);
+  bottom: 22px;
+  z-index: 60;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 8px;
+  padding: 10px 16px;
+  color: #fff;
+  background: var(--green);
+  box-shadow: 0 12px 26px rgba(8, 57, 35, 0.24);
+  font-weight: 900;
 }
 
 .mode-tabs button.is-active,
@@ -1247,6 +1300,76 @@ button {
   margin-top: 14px;
 }
 
+.order-timeline {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.order-timeline span {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.order-timeline span:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 9px;
+  left: calc(50% + 14px);
+  width: calc(100% - 28px);
+  height: 2px;
+  background: var(--line);
+}
+
+.order-timeline i {
+  position: relative;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.order-timeline .is-done {
+  color: var(--green-dark);
+}
+
+.order-timeline .is-done i {
+  border-color: var(--green);
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgba(110, 191, 74, 0.16);
+}
+
+.order-timeline .is-done:not(:last-child)::after {
+  background: var(--green);
+}
+
+.order-timeline.is-closed .is-done {
+  color: var(--muted);
+}
+
+.order-timeline.is-closed .is-done i {
+  border-color: var(--muted);
+  background: var(--muted);
+  box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.12);
+}
+
+.order-timeline.is-closed .is-done:not(:last-child)::after {
+  background: var(--muted);
+}
+
 .game-detail-hero,
 .join-summary {
   display: grid;
@@ -1405,6 +1528,36 @@ button {
   display: grid;
   justify-items: end;
   gap: 8px;
+}
+
+.account-panel {
+  grid-column: 1 / -1;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-soft);
+}
+
+.account-row strong,
+.account-row span {
+  display: block;
+}
+
+.account-row strong {
+  font-size: 18px;
+}
+
+.account-row span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .funnel-list {
@@ -1586,6 +1739,31 @@ th {
   margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.compact-order > div:first-child em,
+.compact-order > div:first-child small {
+  display: block;
+  margin-top: 7px;
+  line-height: 1.55;
+  font-style: normal;
+  font-size: 12px;
+}
+
+.compact-order > div:first-child em {
+  color: var(--ink);
+}
+
+.compact-order > div:first-child small {
+  color: var(--orange);
+}
+
+.table-hint {
+  margin: 6px 0 0;
+  max-width: 170px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .order-code {
@@ -1985,8 +2163,23 @@ th {
     flex-direction: column;
   }
 
+  .topbar-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: stretch;
+  }
+
+  .return-home-fab {
+    left: 12px;
+    right: 12px;
+    bottom: 78px;
+    width: auto;
+  }
+
   .mode-tabs,
   .mode-tabs button,
+  .topbar-home,
+  .session-chip,
   .view-tabs,
   .view-tabs button {
     width: 100%;

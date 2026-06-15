@@ -182,6 +182,65 @@
     return 'blue';
   }
 
+  function orderNextAction(order) {
+    var isGame = Boolean(order.game_id);
+    var startText = fmtDate(order.start_time || order.booking_start_time || order.create_time);
+    return {
+      pending_payment: {
+        title: '下一步：完成支付',
+        body: '支付成功后' + (isGame ? '才会正式占位并展示在球局名单里。' : '场地才会正式保留。') + '未支付订单可随时取消。',
+      },
+      paid: {
+        title: '下一步：到场核销',
+        body: '请在 ' + startText + ' 到场，向场馆出示核销码。开赛/预订前 2 小时内不支持自助退款。',
+      },
+      checked_in: {
+        title: isGame ? '下一步：赛后互评' : '订单已完成',
+        body: isGame ? '比赛结束后 24 小时内完成互评，信用和实力记录会更新。' : '场地已完成核销，可在订单记录里留存凭证。',
+      },
+      refunded: {
+        title: '订单已退款',
+        body: '该订单已关闭，不会占用名额或场地时段。',
+      },
+      cancelled: {
+        title: '订单已取消',
+        body: '该订单未生效，不会占用名额或场地时段。',
+      },
+    }[order.status] || {
+      title: '等待处理',
+      body: '订单状态已更新，请留意消息中心通知。',
+    };
+  }
+
+  function orderTimeline(order) {
+    if (order.status === 'cancelled' || order.status === 'refunded') {
+      return '<div class="order-timeline is-closed"><span class="is-done"><i></i>下单</span><span class="is-done"><i></i>' + statusLabel(order.status) + '</span><span><i></i>释放名额</span><span><i></i>关闭</span></div>';
+    }
+    var steps = [
+      ['pending_payment', '下单'],
+      ['paid', '支付'],
+      ['checked_in', '核销'],
+      [order.game_id ? 'review_open' : 'completed', order.game_id ? '互评' : '完成'],
+    ];
+    var activeIndex = order.status === 'cancelled' || order.status === 'refunded'
+      ? 1
+      : order.status === 'checked_in'
+        ? 2
+        : order.status === 'paid'
+          ? 1
+          : 0;
+    return '<div class="order-timeline">' + steps.map(function (step, index) {
+      return '<span class="' + (index <= activeIndex ? 'is-done' : '') + '"><i></i>' + h(step[1]) + '</span>';
+    }).join('') + '</div>';
+  }
+
+  function exceptionHint(order) {
+    if (order.status === 'pending_payment') return '待支付订单不会占位太久，建议尽快支付或取消。';
+    if (order.status === 'paid') return '如需退款，请在开赛/预订前 2 小时以上操作；临近开始需联系运营。';
+    if (order.status === 'checked_in' && order.game_id) return '互评入口只在比赛结束后 24 小时内开放。';
+    return '';
+  }
+
   function guideSeen() {
     return window.localStorage.getItem('nyq_rating_guide_seen') === '1';
   }
@@ -276,9 +335,17 @@
       '    <div class="brand-mark">NYQ</div>',
       '    <div><h1>宁约球</h1><p>南京高校/园区约局 + 场馆预订</p></div>',
       '  </div>',
-      '  <div class="muted">' + h(user ? user.username || user.name : '未登录') + '</div>',
+      '  <div class="topbar-actions">',
+      '    <button type="button" class="topbar-home" data-user-view="home">回到主页</button>',
+      '    <button type="button" class="topbar-home" data-user-view="venues">订球场</button>',
+      '    <div class="session-chip"><strong>' + h(user ? user.username || user.name : '未登录') + '</strong><span>player / signed in</span></div>',
+      '  </div>',
       '</header>',
     ].join('');
+  }
+
+  function returnHomeFab() {
+    return '';
   }
 
   function tabButton(mode, label) {
@@ -617,6 +684,9 @@
   }
 
   function paymentPanel(order) {
+    var next = orderNextAction(order);
+    var canPay = order.status === 'pending_payment';
+    var canCancel = order.status === 'pending_payment' || order.status === 'paid';
     return [
       '<div class="modal-backdrop" data-close-payment>',
       '  <section class="payment-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
@@ -631,10 +701,11 @@
       metric('订单状态', statusLabel(order.status || 'pending_payment')),
       metric('信用分', creditScore()),
       '    </div>',
-      '    <div class="panel-soft-block"><strong>演示支付说明</strong><p>点击下方按钮后，系统会把订单状态更新为已支付；球局报名会在支付成功后正式占位并生成核销码。</p></div>',
+      orderTimeline(order),
+      '    <div class="panel-soft-block"><strong>' + h(next.title) + '</strong><p>' + h(next.body) + '</p></div>',
       '    <div class="payment-actions">',
-      '      <button class="secondary-btn" type="button" data-cancel-order="' + h(order.order_id || order.id) + '">取消订单</button>',
-      '      <button class="primary-btn" type="button" data-pay-order="' + h(order.order_id || order.id) + '">模拟微信支付</button>',
+      canCancel ? '      <button class="secondary-btn" type="button" data-cancel-order="' + h(order.order_id || order.id) + '">' + (order.status === 'paid' ? '申请退款/取消' : '取消订单') + '</button>' : '',
+      canPay ? '      <button class="primary-btn" type="button" data-pay-order="' + h(order.order_id || order.id) + '">模拟微信支付</button>' : '      <button class="primary-btn" type="button" disabled>' + statusLabel(order.status || 'pending_payment') + '</button>',
       '    </div>',
       '  </section>',
       '</div>',
@@ -784,8 +855,16 @@
   function meView() {
     var me = state.data.me || {};
     var orders = state.data.myOrders || [];
+    var user = session() || {};
     return [
       '<section class="section layout-2 profile-layout">',
+      '  <div class="panel account-panel">',
+      '    <div class="panel-title"><h3>账号</h3><span>登录状态</span></div>',
+      '    <div class="account-row">',
+      '      <div><strong>' + h(user.username || user.name || 'demo_player') + '</strong><span>player / signed in</span></div>',
+      '      <button class="secondary-btn" type="button" data-local-logout>退出登录</button>',
+      '    </div>',
+      '  </div>',
       '  <div>',
       selfRatingPanel(),
       '  </div>',
@@ -803,12 +882,12 @@
       '    </div>',
       '  </div>',
       '  <div class="panel">',
-      '    <div class="panel-title"><h3>我的工作台</h3><span>高光、档案、场馆、管理入口</span></div>',
+      '    <div class="panel-title"><h3>我的服务</h3><span>订场、发局、集锦、运动档案</span></div>',
       '    <div class="story-list compact">',
+      '      <button type="button" data-user-view="venues">订球场</button>',
+      '      <button type="button" data-user-view="create">发起球局</button>',
       '      <button type="button" data-user-view="ai">高光集锦</button>',
       '      <button type="button" data-user-view="data">运动档案</button>',
-      '      <button type="button" data-mode="venue">场馆管理</button>',
-      '      <button type="button" data-mode="admin">运营管理</button>',
       '    </div>',
       '  </div>',
       '</section>',
@@ -823,7 +902,8 @@
       '<section class="section">',
       '  <div class="panel-title"><h3>消息中心</h3><span>报名、核销、互评提醒</span></div>',
       messages.length ? '<div class="message-list">' + messages.map(function (item) {
-        return '<article class="message-card"><div><strong>' + h(item.title) + '</strong><p>' + h(item.body) + '</p></div><div class="message-side"><span>' + h(item.time) + '</span>' + (item.status === 'unread' ? '<button class="secondary-btn small-btn" type="button" data-read-notification="' + h(item.id) + '">已读</button>' : '<span class="tag gray">已读</span>') + '</div></article>';
+        var canMarkRead = item.id && item.status === 'unread';
+        return '<article class="message-card"><div><strong>' + h(item.title) + '</strong><p>' + h(item.body) + '</p></div><div class="message-side"><span>' + h(item.time) + '</span>' + (canMarkRead ? '<button class="secondary-btn small-btn" type="button" data-read-notification="' + h(item.id) + '">已读</button>' : '<span class="tag gray">已读</span>') + '</div></article>';
       }).join('') + '</div>' : '<div class="empty">暂无消息</div>',
       '</section>',
     ].join('');
@@ -1049,11 +1129,15 @@
       orders.map(function (order) {
         var canPay = order.status === 'pending_payment';
         var canCheckin = order.status === 'paid';
+        var next = orderNextAction(order);
+        var hint = exceptionHint(order);
         return [
           '<article class="compact-order">',
           '  <div>',
           '    <strong>' + h(order.title || '场地预订') + '</strong>',
           '    <span>' + h(order.venue_name) + ' / ' + fmtDate(order.start_time || order.booking_start_time || order.create_time) + (order.booking_end_time ? ' - ' + fmtDate(order.booking_end_time) : '') + '</span>',
+          '    <em>' + h(next.title) + '：' + h(next.body) + '</em>',
+          hint ? '    <small>' + h(hint) + '</small>' : '',
           '  </div>',
           '  <div class="order-code">',
           '    <span>核销码</span>',
@@ -1137,6 +1221,8 @@
       '<thead><tr><th>订单</th><th>用户</th><th>球局</th><th>场馆</th><th>金额</th><th>核销码</th><th>状态</th><th>操作</th></tr></thead>',
       '<tbody>',
       orders.map(function (order) {
+        var canCheckin = order.status === 'paid';
+        var next = orderNextAction(order);
         return [
           '<tr>',
           '<td>#' + h(order.id) + '</td>',
@@ -1145,8 +1231,8 @@
           '<td>' + h(order.venue_name) + '</td>',
           '<td>' + money(order.amount) + '</td>',
           '<td>' + h(order.checkin_code) + '</td>',
-          '<td><span class="tag ' + (order.status === 'checked_in' ? '' : 'orange') + '">' + statusLabel(order.status) + '</span></td>',
-          '<td><button class="secondary-btn" type="button" data-checkin-order="' + h(order.id) + '"' + (order.status === 'checked_in' ? ' disabled' : '') + '>核销</button></td>',
+          '<td><span class="tag ' + orderStatusClass(order.status) + '">' + statusLabel(order.status) + '</span><p class="table-hint">' + h(next.title) + '</p></td>',
+          '<td><button class="secondary-btn" type="button" data-checkin-order="' + h(order.id) + '"' + (canCheckin ? '' : ' disabled') + '>' + (canCheckin ? '核销' : statusLabel(order.status)) + '</button></td>',
           '</tr>',
         ].join('');
       }).join(''),
@@ -1269,18 +1355,24 @@
   }
 
   function render() {
-    var content = state.mode === 'venue' ? venueMode() : state.mode === 'admin' ? adminMode() : userMode();
-    app.innerHTML = topbar() + '<main class="page">' + content + '</main>' + (state.toast ? '<div class="toast">' + h(state.toast) + '</div>' : '');
+    state.mode = 'user';
+    var content = userMode();
+    app.innerHTML = topbar() + returnHomeFab() + '<main class="page">' + content + '</main>' + (state.toast ? '<div class="toast">' + h(state.toast) + '</div>' : '');
     bindEvents();
   }
 
   function bindEvents() {
     app.querySelectorAll('[data-mode]').forEach(function (button) {
       button.addEventListener('click', async function () {
-        state.mode = button.getAttribute('data-mode');
+        state.mode = 'user';
+        if (button.hasAttribute('data-user-view')) {
+          state.userView = button.getAttribute('data-user-view');
+        } else {
+          state.userView = 'home';
+        }
         render();
         try {
-          await refreshModeData();
+          await loadBootstrap();
           render();
         } catch (error) {
           showToast(error.message);
@@ -1288,7 +1380,7 @@
       });
     });
 
-    app.querySelectorAll('[data-user-view], [data-jump-view]').forEach(function (button) {
+    app.querySelectorAll('[data-user-view]:not([data-mode]), [data-jump-view]').forEach(function (button) {
       button.addEventListener('click', function () {
         var projectFilter = button.getAttribute('data-project-filter');
         if (projectFilter) state.sportFilter = projectFilter;
@@ -1298,6 +1390,20 @@
         if (state.userView === 'venues') track('venue_list_view');
         if (state.userView === 'games') track('game_list_view');
         render();
+      });
+    });
+
+    app.querySelectorAll('[data-return-home]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        state.mode = 'user';
+        state.userView = 'home';
+        render();
+        try {
+          await loadBootstrap();
+          render();
+        } catch (error) {
+          showToast(error.message);
+        }
       });
     });
 
@@ -1422,6 +1528,14 @@
           showToast('演示账号已重置');
         } catch (error) {
           showToast(error.message);
+        }
+      });
+    });
+
+    app.querySelectorAll('[data-local-logout]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (window.AnotherMeLocalAuth && window.AnotherMeLocalAuth.logout) {
+          window.AnotherMeLocalAuth.logout();
         }
       });
     });
