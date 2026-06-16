@@ -529,7 +529,7 @@ const requestUser = (req) => ({
 
 const userCreditScore = async (pool, userId) => {
   const [[row]] = await pool.execute(
-    'SELECT COALESCE(SUM(score_delta), 100) AS score FROM sports_credit_event WHERE user_id = ?',
+    'SELECT 100 + COALESCE(SUM(score_delta), 0) AS score FROM sports_credit_event WHERE user_id = ?',
     [userId],
   )
   return Number(row?.score || 100)
@@ -695,16 +695,25 @@ const analyticsFunnel = async (pool) => {
 const resetDemoAccount = async (pool, user) => {
   await pool.execute('DELETE FROM sports_credit_event WHERE user_id = ?', [user.id])
   await pool.execute(
-    'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note) VALUES (?, ?, "demo_reset", 100, "演示账号信用重置")',
+    'INSERT INTO sports_credit_event (user_id, username, event_type, score_delta, note) VALUES (?, ?, "demo_reset", 0, "演示账号信用重置")',
     [user.id, user.username],
   )
-  await pool.execute('UPDATE sports_order SET status = "cancelled", cancelled_at = NOW() WHERE user_id = ? AND status = "pending_payment"', [user.id])
+  await pool.execute('UPDATE sports_order SET status = "cancelled", cancelled_at = NOW() WHERE user_id = ? AND status IN ("pending_payment", "paid")', [user.id])
   await pool.execute('UPDATE sports_signup SET no_show = 0 WHERE user_id = ?', [user.id])
+  await pool.execute('DELETE FROM sports_notification WHERE user_id = ?', [user.id])
   await createNotification(pool, user, {
     type: 'demo_reset',
     title: '演示账号已重置',
     body: '信用分已恢复到 100，待支付订单已清理，可以重新演示完整流程。',
   })
+}
+
+const cleanupSportsDemoText = async (pool) => {
+  await pool.execute(`UPDATE sports_credit_event SET note = '演示账号信用重置' WHERE event_type = 'demo_reset' AND note LIKE '%?%'`)
+  await pool.execute(`UPDATE sports_notification SET title = '演示账号已重置' WHERE type = 'demo_reset' AND title LIKE '%?%'`)
+  await pool.execute(`UPDATE sports_notification SET body = '信用分已恢复到 100，待支付订单已清理，可以重新演示完整流程。' WHERE type = 'demo_reset' AND body LIKE '%?%'`)
+  await pool.execute(`UPDATE sports_data_upload SET source = '手机/运动相机' WHERE source LIKE '%?%' OR source = ''`)
+  await pool.execute(`UPDATE sports_data_upload SET note = '5 人制足球，包含奔跑、急停、变向和对抗片段。' WHERE note LIKE '%?%' OR note = ''`)
 }
 
 const ensureRatingSummary = async (pool, user) => {
@@ -849,7 +858,7 @@ const sportsSummaryForUser = async (pool, user) => {
     [user.id],
   )
   const [creditRows] = await pool.execute(
-    'SELECT COALESCE(SUM(score_delta), 100) AS score FROM sports_credit_event WHERE user_id = ?',
+    'SELECT 100 + COALESCE(SUM(score_delta), 0) AS score FROM sports_credit_event WHERE user_id = ?',
     [user.id],
   )
   return {
@@ -1081,6 +1090,7 @@ const handleSportsApi = async (req, res, requestUrl) => {
   if (!pathName.startsWith('/api/sports-app/')) return false
   try {
     const pool = await ensureSportsSchema()
+    await cleanupSportsDemoText(pool)
     const user = requestUser(req)
 
     if (pathName === '/api/sports-app/venues' && req.method === 'GET') {
@@ -1387,6 +1397,14 @@ const handleSportsApi = async (req, res, requestUrl) => {
     if (pathName === '/api/sports-app/games' && req.method === 'POST') {
       const body = await readJsonBody(req)
       await requireGoodCredit(pool, user)
+      const startTime = text(body.start_time, 40)
+      const endTime = text(body.end_time, 40)
+      if (!startTime || !endTime || Number.isNaN(new Date(startTime).getTime()) || Number.isNaN(new Date(endTime).getTime())) {
+        return json(res, { ok: false, error: '请选择有效的开始时间和结束时间' }, 400)
+      }
+      if (new Date(endTime).getTime() <= new Date(startTime).getTime()) {
+        return json(res, { ok: false, error: '结束时间必须晚于开始时间' }, 400)
+      }
       const [result] = await pool.execute(
         `INSERT INTO sports_game
           (sport, title, venue_id, start_time, end_time, capacity, fee_per_person, notes, creator_user_id, status)
@@ -1395,8 +1413,8 @@ const handleSportsApi = async (req, res, requestUrl) => {
           text(body.sport, 20) || 'football',
           text(body.title, 120) || '南京同城约球',
           Number(body.venue_id),
-          text(body.start_time, 40),
-          text(body.end_time, 40),
+          startTime,
+          endTime,
           Number(body.capacity || 10),
           Number(body.fee_per_person || 0),
           text(body.notes, 500),

@@ -26,6 +26,9 @@
     joinConfirm: null,
     venueBooking: null,
     paymentConfirm: null,
+    supportOpen: false,
+    supportMessages: [],
+    highlightOrderId: null,
     toast: '',
   };
 
@@ -329,6 +332,7 @@
 
   function topbar() {
     var user = session();
+    var username = user ? user.username || user.name : '未登录';
     return [
       '<header class="topbar">',
       '  <div class="brand">',
@@ -338,7 +342,10 @@
       '  <div class="topbar-actions">',
       '    <button type="button" class="topbar-home" data-user-view="home">回到主页</button>',
       '    <button type="button" class="topbar-home" data-user-view="venues">订球场</button>',
-      '    <div class="session-chip"><strong>' + h(user ? user.username || user.name : '未登录') + '</strong><span>player / signed in</span></div>',
+      '    <button type="button" class="session-chip" data-user-view="me" aria-label="进入个人中心">',
+      '      <span class="session-avatar">' + h(initials(username)) + '</span>',
+      '      <span class="session-copy"><strong>' + h(username) + '</strong><em>player / signed in</em></span>',
+      '    </button>',
       '  </div>',
       '</header>',
     ].join('');
@@ -368,6 +375,15 @@
     ].join('');
   }
 
+  function profileBackTitle(title, subtitle) {
+    return [
+      '<div class="panel-title profile-back-title">',
+      '  <div><h3>' + h(title) + '</h3><span>' + h(subtitle || '') + '</span></div>',
+      '  <button class="secondary-btn small-btn" type="button" data-user-view="me">返回个人中心</button>',
+      '</div>',
+    ].join('');
+  }
+
   function clearOverlays() {
     state.reviewDetail = null;
     state.playerProfile = null;
@@ -375,6 +391,7 @@
     state.joinConfirm = null;
     state.venueBooking = null;
     state.paymentConfirm = null;
+    state.supportOpen = false;
   }
 
   function hero() {
@@ -625,6 +642,13 @@
     return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
   }
 
+  function localDateTimeValue(offsetDays, hour, minute) {
+    var next = new Date();
+    next.setDate(next.getDate() + (offsetDays || 0));
+    next.setHours(hour == null ? 19 : hour, minute == null ? 0 : minute, 0, 0);
+    return next.getFullYear() + '-' + String(next.getMonth() + 1).padStart(2, '0') + '-' + String(next.getDate()).padStart(2, '0') + 'T' + String(next.getHours()).padStart(2, '0') + ':' + String(next.getMinutes()).padStart(2, '0');
+  }
+
   function filterButtons() {
     var areas = ['all', '南师附中江宁分校', '江宁大学城', '江宁开发区', '百家湖'];
     var sports = [['all', '全部'], ['football', '足球'], ['basketball', '篮球']];
@@ -683,7 +707,7 @@
     });
     return [
       '<section class="section">',
-      '  <div class="panel-title"><h3>附近球局</h3><span>实力匹配优先，先付后打</span></div>',
+      state.userView === 'games' ? profileBackTitle('附近球局', '实力匹配优先，先付后打') : '<div class="panel-title"><h3>附近球局</h3><span>实力匹配优先，先付后打</span></div>',
       '  <div class="games-list">' + (games.length ? games.map(gameCard).join('') : '<div class="empty">暂无球局</div>') + '</div>',
       '</section>',
       state.reviewDetail ? reviewPanel(state.reviewDetail) : '',
@@ -780,6 +804,8 @@
 
   function createView() {
     var approved = state.data.venues.filter(function (venue) { return venue.status === 'approved'; });
+    var defaultStart = localDateTimeValue(1, 19, 0);
+    var defaultEnd = localDateTimeValue(1, 21, 0);
     return [
       '<section class="section form-panel">',
       '  <h3>创建足球/篮球局</h3>',
@@ -787,8 +813,8 @@
       field('球局标题', '<input name="title" required maxlength="120" value="江宁大学城周末约球" />'),
       field('运动类型', '<select name="sport"><option value="football">足球</option><option value="basketball">篮球</option></select>'),
       field('场馆', '<select name="venue_id">' + approved.map(function (venue) { return '<option value="' + h(venue.id) + '">' + h(venue.name) + '</option>'; }).join('') + '</select>'),
-      field('开始时间', '<input name="start_time" type="datetime-local" required />'),
-      field('结束时间', '<input name="end_time" type="datetime-local" required />'),
+      field('开始时间', '<input name="start_time" type="datetime-local" required value="' + h(defaultStart) + '" />'),
+      field('结束时间', '<input name="end_time" type="datetime-local" required value="' + h(defaultEnd) + '" />'),
       field('人数上限', '<input name="capacity" type="number" min="2" max="50" value="10" />'),
       field('AA 费用/人', '<input name="fee_per_person" type="number" min="0" value="30" />'),
       field('备注', '<textarea name="notes" maxlength="500">强度适中，报名后请准时到场。</textarea>'),
@@ -922,44 +948,177 @@
     var me = state.data.me || {};
     var orders = state.data.myOrders || [];
     var user = session() || {};
+    var rating = ratingSummary();
+    var username = user.username || user.name || 'demo_player';
+    var pendingOrders = orders.filter(function (order) {
+      return ['pending_payment', 'paid'].includes(order.status);
+    }).length;
+    var played = Number(me.played || 0);
+    var credit = Number(me.credit_score || 100);
     return [
-      '<section class="section layout-2 profile-layout">',
-      '  <div class="panel account-panel">',
-      '    <div class="panel-title"><h3>账号</h3><span>登录状态</span></div>',
-      '    <div class="account-row">',
-      '      <div><strong>' + h(user.username || user.name || 'demo_player') + '</strong><span>player / signed in</span></div>',
-      '      <button class="secondary-btn" type="button" data-local-logout>退出登录</button>',
+      '<section class="profile-page">',
+      '  <div class="profile-hero-card">',
+      '    <div class="profile-toolbar">',
+      '      <button type="button" class="profile-icon-btn" data-jump-view="messages" aria-label="消息"><span class="profile-icon-bell"></span></button>',
+      '      <button type="button" class="profile-icon-btn" data-open-support aria-label="联系客服"><span class="profile-icon-phone"></span></button>',
+      '      <button type="button" class="profile-icon-btn" data-profile-toast="设置功能将在正式版接入"><span class="profile-icon-gear"></span></button>',
+      '    </div>',
+      '    <div class="profile-identity">',
+      '      <span class="profile-avatar">' + h(initials(username)) + '</span>',
+      '      <div class="profile-user-main">',
+      '        <h2>' + h(username) + '</h2>',
+      '        <p>南京 · SnapSport 球友</p>',
+      '        <div class="profile-tags"><span>信用 ' + h(credit) + '</span><span>' + h(rating.level_label || '进阶') + ' ' + oneDecimal(rating.composite_score, 3) + '分</span></div>',
+      '      </div>',
+      '      <button class="profile-edit-btn" type="button" data-profile-toast="编辑资料将在正式版开放">编辑</button>',
+      '    </div>',
+      '    <div class="profile-stats">',
+      '      <button type="button" data-user-view="orders"><strong>' + h(orders.length) + '</strong><span>订单</span></button>',
+      '      <button type="button" data-user-view="my-games"><strong>' + h(played) + '</strong><span>参赛</span></button>',
+      '      <button type="button" data-user-view="orders"><strong>' + h(pendingOrders) + '</strong><span>待处理</span></button>',
       '    </div>',
       '  </div>',
-      '  <div>',
+      '  <div class="profile-wallet-card">',
+      '    <button type="button" data-user-view="credit"><span>守约账户</span><strong>' + h(credit) + '</strong><small>信用分</small></button>',
+      '    <div><span>到场核销</span><strong>' + h(me.checked_in || 0) + '</strong><small>次</small></div>',
+      '    <div><span>爽约记录</span><strong>' + h(me.no_shows || 0) + '</strong><small>次</small></div>',
+      '  </div>',
+      '  <div class="profile-shortcuts">',
+      profileShortcut('games', '我的球局', '赛程与报名', 'ball', 'my-games'),
+      profileShortcut('orders', '我的订单', '支付与核销', 'order', 'orders'),
+      profileShortcut('credit', '我的信用', '守约记录', 'shield', 'credit'),
+      profileShortcut('fav', '我的收藏', '常用场馆', 'star', 'favorites'),
+      '  </div>',
+      '  <div class="profile-menu-card">',
+      profileMenuItem('ai', 'AI 高光集锦', '黑客松演示入口', 'ai'),
+      profileMenuItem('data', '运动数据档案', '预留数据上传', 'data'),
+      '  </div>',
+      '  <div class="profile-menu-card">',
+      profileMenuItem('support', '联系客服', '模拟客服窗口', null, 'data-open-support'),
+      profileMenuItem('feedback', '投诉反馈', '演示用本地反馈', null, 'data-open-support'),
+      profileMenuItem('setting', '设置 / 更多', '正式版接入隐私与通知', null, 'data-profile-toast="设置功能将在正式版接入"'),
+      '  </div>',
+      '  <details class="profile-rating-details">',
+      '    <summary><span>我的实力评级</span><em>展开自评与互评明细</em></summary>',
       selfRatingPanel(),
-      '  </div>',
-      '  <div class="panel">',
-      '    <div class="panel-title"><h3>我的订单与球局</h3><span>报名支付记录</span></div>',
-      myOrderList(orders),
-      '  </div>',
-      '  <div class="panel">',
-      '    <div class="panel-title"><h3>信用记录</h3><span>爽约约束</span></div>',
-      '    <div class="metric-grid">',
-      metric('信用分', me.credit_score || 100),
-      metric('参与场次', me.played || 0),
-      metric('核销次数', me.checked_in || 0),
-      metric('爽约次数', me.no_shows || 0),
-      '    </div>',
-      '  </div>',
-      '  <div class="panel">',
-      '    <div class="panel-title"><h3>我的服务</h3><span>订场、发局、集锦、运动档案</span></div>',
-      '    <div class="story-list compact">',
-      '      <button type="button" data-user-view="venues">订球场</button>',
-      '      <button type="button" data-user-view="create">发起球局</button>',
-      '      <button type="button" data-user-view="ai">高光集锦</button>',
-      '      <button type="button" data-user-view="data">运动档案</button>',
-      '    </div>',
-      '  </div>',
+      '  </details>',
+      '  <button class="profile-logout" type="button" data-local-logout>退出登录</button>',
       '</section>',
+      state.supportOpen ? supportWindow() : '',
       state.reviewDetail ? reviewPanel(state.reviewDetail) : '',
       state.playerProfile ? playerProfileModal(state.playerProfile) : '',
     ].join('');
+  }
+
+  function creditView() {
+    var me = state.data.me || {};
+    var played = Number(me.played || 0);
+    var credit = Number(me.credit_score || 100);
+    return [
+      '<section class="section">',
+      '  <div class="panel profile-credit-panel" id="profile-credit">',
+      profileBackTitle('信用记录', '黑客松演示账户'),
+      '    <div class="profile-credit-row"><span>当前信用分</span><strong>' + h(credit) + '</strong><em>' + (credit >= 90 ? '守约良好' : credit >= 80 ? '可以报名' : '报名受限') + '</em></div>',
+      '    <div class="profile-credit-row"><span>参与场次</span><strong>' + h(played) + '</strong><em>累计到场越多，可信度越高</em></div>',
+      '    <div class="profile-credit-row"><span>爽约次数</span><strong>' + h(me.no_shows || 0) + '</strong><em>低信用会限制报名和订场</em></div>',
+      '  </div>',
+      '</section>',
+    ].join('');
+  }
+
+  function myGamesView() {
+    var joined = (state.data.games || []).filter(function (game) { return game.is_joined; });
+    return [
+      '<section class="section">',
+      profileBackTitle('我的球局', '只展示我已报名或参与的球局'),
+      '  <div class="games-list">' + (joined.length ? joined.map(gameCard).join('') : '<div class="empty">还没有参加球局。可以去“看球局”报名一场附近活动。</div>') + '</div>',
+      '</section>',
+      state.reviewDetail ? reviewPanel(state.reviewDetail) : '',
+      state.playerProfile ? playerProfileModal(state.playerProfile) : '',
+      state.gameDetail ? gameDetailPanel(state.gameDetail) : '',
+      state.joinConfirm ? joinConfirmPanel(state.joinConfirm) : '',
+      state.paymentConfirm ? paymentPanel(state.paymentConfirm) : '',
+    ].join('');
+  }
+
+  function favoritesView() {
+    var approved = (state.data.venues || []).filter(function (venue) { return venue.status === 'approved'; });
+    return [
+      '<section class="section">',
+      profileBackTitle('我的收藏', '演示版默认收藏样板区合作场馆'),
+      '  <div class="home-venue-list">' + (approved.length ? approved.slice(0, 3).map(homeVenueCard).join('') : '<div class="empty">暂无收藏场馆。</div>') + '</div>',
+      '</section>',
+      state.venueBooking ? venueBookingPanel(state.venueBooking) : '',
+    ].join('');
+  }
+
+  function myOrdersView() {
+    var orders = state.data.myOrders || [];
+    var activeOrders = orders.filter(function (order) {
+      return ['pending_payment', 'paid', 'checked_in'].includes(order.status);
+    });
+    var historyOrders = orders.filter(function (order) {
+      return !['pending_payment', 'paid', 'checked_in'].includes(order.status);
+    });
+    return [
+      '<section class="section">',
+      '  <div class="panel">',
+      profileBackTitle('我的订单', '报名支付与核销'),
+      myOrderList(activeOrders, '当前没有进行中的订单。可以去找球场预订，或报名一场附近球局。'),
+      historyOrders.length ? '<details class="order-history"><summary>历史订单 ' + h(historyOrders.length) + ' 条</summary>' + myOrderList(historyOrders) + '</details>' : '',
+      '  </div>',
+      '</section>',
+      state.reviewDetail ? reviewPanel(state.reviewDetail) : '',
+    ].join('');
+  }
+
+  function profileShortcut(key, title, desc, icon, view) {
+    var attr = 'data-user-view="' + h(view || 'me') + '"';
+    return '<button type="button" class="profile-shortcut shortcut-' + h(icon) + '" ' + attr + '><span></span><strong>' + h(title) + '</strong><small>' + h(desc) + '</small></button>';
+  }
+
+  function profileMenuItem(icon, title, desc, view, customAttr) {
+    var attr = customAttr || ('data-user-view="' + h(view || 'home') + '"');
+    return [
+      '<button type="button" class="profile-menu-item menu-' + h(icon) + '" ' + attr + '>',
+      '  <span class="profile-menu-icon"></span>',
+      '  <strong>' + h(title) + '<small>' + h(desc) + '</small></strong>',
+      '  <em>›</em>',
+      '</button>',
+    ].join('');
+  }
+
+  function supportWindow() {
+    var messages = state.supportMessages.length ? state.supportMessages : [
+      { from: 'bot', text: '你好，我是 SnapSport 在线客服。这里是黑客松演示窗口，可以快速查看报名、取消、信用分和发局规则。' },
+    ];
+    var questions = ['怎么报名球局？', '如何取消订单？', '信用分怎么恢复？', '如何发起组局？'];
+    return [
+      '<div class="support-backdrop" data-close-support>',
+      '  <section class="support-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
+      '    <div class="support-head"><div><span>在线客服 · 演示版</span><strong>SnapSport 助手</strong></div><button type="button" data-close-support>关闭</button></div>',
+      '    <div class="support-demo-note">黑客松演示用：当前为本地模拟客服，正式版可接入微信客服或人工工单。</div>',
+      '    <div class="support-messages">' + messages.map(function (item) {
+        return '<div class="support-msg ' + (item.from === 'user' ? 'is-user' : 'is-bot') + '">' + h(item.text) + '</div>';
+      }).join('') + '</div>',
+      '    <div class="support-questions">' + questions.map(function (item) {
+        return '<button type="button" data-support-question="' + h(item) + '">' + h(item) + '</button>';
+      }).join('') + '</div>',
+      '    <form class="support-input" data-support-form>',
+      '      <input name="message" placeholder="输入问题，演示版会本地回复" autocomplete="off" />',
+      '      <button type="submit">发送</button>',
+      '    </form>',
+      '  </section>',
+      '</div>',
+    ].join('');
+  }
+
+  function supportReply(question) {
+    if (question.indexOf('报名') >= 0) return '在首页或“看球局”选择一场球局，点击报名支付即可。演示版会生成待支付订单和核销码。';
+    if (question.indexOf('取消') >= 0) return '正式版会在开场前设置可取消时间；当前演示版可用“演示重置”清空待支付/测试订单。';
+    if (question.indexOf('信用') >= 0) return '按时到场并完成核销会保持或恢复信用分；爽约会扣分，低于 80 分会限制报名。';
+    if (question.indexOf('发起') >= 0 || question.indexOf('组局') >= 0) return '点击底部“发局”或首页“立即组局”，填写时间、地点、人数和费用后提交。';
+    return '已收到。黑客松演示版先用本地模拟客服，正式版可接入微信客服或人工工单。';
   }
 
   function messagesView() {
@@ -1188,8 +1347,8 @@
     return messages.slice(0, 80);
   }
 
-  function myOrderList(orders) {
-    if (!orders.length) return '<div class="empty">还没有订单。先去找球场预订，或报名一场附近球局。</div>';
+  function myOrderList(orders, emptyText) {
+    if (!orders.length) return '<div class="empty">' + h(emptyText || '还没有订单。先去找球场预订，或报名一场附近球局。') + '</div>';
     return [
       '<div class="compact-list">',
       orders.map(function (order) {
@@ -1198,7 +1357,7 @@
         var next = orderNextAction(order);
         var hint = exceptionHint(order);
         return [
-          '<article class="compact-order">',
+          '<article class="compact-order ' + (String(state.highlightOrderId || '') === String(order.id) ? 'is-highlighted' : '') + '">',
           '  <div>',
           '    <strong>' + h(order.title || '场地预订') + '</strong>',
           '    <span>' + h(order.venue_name) + ' / ' + fmtDate(order.start_time || order.booking_start_time || order.create_time) + (order.booking_end_time ? ' - ' + fmtDate(order.booking_end_time) : '') + '</span>',
@@ -1225,12 +1384,16 @@
       home: function () { return ''; },
       venues: venuesView,
       games: gamesView,
+      'my-games': myGamesView,
       create: createView,
       teams: teamsView,
       ai: aiClipsView,
       data: dataUploadView,
+      favorites: favoritesView,
       demo: demoView,
       messages: messagesView,
+      orders: myOrdersView,
+      credit: creditView,
       me: meView,
     }[state.userView]();
     var isHome = state.userView === 'home';
@@ -1427,7 +1590,27 @@
     bindEvents();
   }
 
+  function bindRadarSlider() {
+    var slider = app.querySelector('.radar-slider');
+    var hint = app.querySelector('.radar-scroll-hint');
+    if (!slider || !hint) return;
+    var dots = Array.from(hint.querySelectorAll('i'));
+    var update = function () {
+      var pageWidth = Math.max(1, slider.clientWidth);
+      var index = Math.max(0, Math.min(dots.length - 1, Math.round(slider.scrollLeft / pageWidth)));
+      dots.forEach(function (dot, dotIndex) {
+        dot.classList.toggle('is-active', dotIndex === index);
+      });
+      hint.setAttribute('data-active-page', String(index + 1));
+    };
+    slider.addEventListener('scroll', function () {
+      window.requestAnimationFrame(update);
+    }, { passive: true });
+    update();
+  }
+
   function bindEvents() {
+    bindRadarSlider();
     app.querySelectorAll('[data-mode]').forEach(function (button) {
       button.addEventListener('click', async function () {
         state.mode = 'user';
@@ -1473,6 +1656,48 @@
         } catch (error) {
           showToast(error.message);
         }
+      });
+    });
+
+    app.querySelectorAll('[data-open-support]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.supportOpen = true;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-close-support]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        state.supportOpen = false;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-support-question]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var question = button.getAttribute('data-support-question') || '';
+        state.supportMessages.push({ from: 'user', text: question });
+        state.supportMessages.push({ from: 'bot', text: supportReply(question) });
+        render();
+      });
+    });
+
+    var supportForm = app.querySelector('[data-support-form]');
+    if (supportForm) {
+      supportForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        var input = supportForm.querySelector('input[name="message"]');
+        var message = (input && input.value || '').trim();
+        if (!message) return;
+        state.supportMessages.push({ from: 'user', text: message });
+        state.supportMessages.push({ from: 'bot', text: supportReply(message) });
+        render();
+      });
+    }
+
+    app.querySelectorAll('[data-profile-toast]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        showToast(button.getAttribute('data-profile-toast') || '正式版接入');
       });
     });
 
@@ -1552,7 +1777,10 @@
           var result = await api('/api/sports-app/orders/' + button.getAttribute('data-pay-order') + '/pay', { method: 'POST', body: '{}' });
           state.paymentConfirm = null;
           await loadBootstrap();
-          showToast('支付成功，核销码 ' + result.checkin_code);
+          state.userView = 'orders';
+          state.highlightOrderId = result.order_id;
+          render();
+          showToast('支付成功，已跳转到我的订单，核销码 ' + result.checkin_code);
         } catch (error) {
           showToast(error.message);
         }
@@ -1732,9 +1960,10 @@
           await api('/api/sports-app/games', { method: 'POST', body: JSON.stringify(body) });
           await loadBootstrap();
           state.userView = 'games';
+          render();
           showToast('球局已发布，已写入数据库');
         } catch (error) {
-          showToast(error.message);
+          showToast(error.message || '发局失败，请检查时间、场馆和信用分');
         }
       });
     }
@@ -1819,6 +2048,9 @@
           await api('/api/sports-app/orders/' + button.getAttribute('data-checkin-order') + '/checkin', { method: 'POST', body: '{}' });
           await loadOrders();
           await loadBootstrap();
+          state.userView = 'orders';
+          state.highlightOrderId = button.getAttribute('data-checkin-order');
+          render();
           showToast('核销成功，信用分已更新');
         } catch (error) {
           showToast(error.message);
