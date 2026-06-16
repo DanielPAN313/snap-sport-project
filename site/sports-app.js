@@ -4,6 +4,7 @@
     userView: 'home',
     venueFilter: 'all',
     sportFilter: 'all',
+    venueSearch: '',
     data: {
       venues: [],
       games: [],
@@ -174,10 +175,17 @@
     return Number((state.data.me || {}).credit_score || 100);
   }
 
-  function creditLocked() {
+  function publicJoinLocked() {
     return creditScore() < 80;
   }
 
+  function actionLocked() {
+    return creditScore() < 60;
+  }
+
+  function creditLocked() {
+    return actionLocked();
+  }
   function orderStatusClass(status) {
     if (status === 'checked_in' || status === 'completed') return '';
     if (status === 'pending_payment' || status === 'pending_checkin' || status === 'open' || status === 'forming') return 'orange';
@@ -191,11 +199,11 @@
     return {
       pending_payment: {
         title: '下一步：完成支付',
-        body: '支付成功后' + (isGame ? '才会正式占位并展示在球局名单里。' : '场地才会正式保留。') + '未支付订单可随时取消。',
+        body: '支付成功后，' + (isGame ? '球局才会正式占位并展示在球局名单里。' : '场地才会正式保留。') + '未支付订单可随时取消。',
       },
       paid: {
         title: '下一步：到场核销',
-        body: '请在 ' + startText + ' 到场，向场馆出示核销码。开赛/预订前 2 小时内不支持自助退款。',
+        body: '请在 ' + startText + ' 到场，向场馆出示核销码。开赛/预订前 1 小时内不支持自助退款。',
       },
       checked_in: {
         title: isGame ? '下一步：赛后互评' : '订单已完成',
@@ -214,7 +222,6 @@
       body: '订单状态已更新，请留意消息中心通知。',
     };
   }
-
   function orderTimeline(order) {
     if (order.status === 'cancelled' || order.status === 'refunded') {
       return '<div class="order-timeline is-closed"><span class="is-done"><i></i>下单</span><span class="is-done"><i></i>' + statusLabel(order.status) + '</span><span><i></i>释放名额</span><span><i></i>关闭</span></div>';
@@ -239,7 +246,7 @@
 
   function exceptionHint(order) {
     if (order.status === 'pending_payment') return '待支付订单不会占位太久，建议尽快支付或取消。';
-    if (order.status === 'paid') return '如需退款，请在开赛/预订前 2 小时以上操作；临近开始需联系运营。';
+    if (order.status === 'paid') return '开局/预订前 24 小时内取消扣 5 分，前 1 小时内取消扣 20 分。';
     if (order.status === 'checked_in' && order.game_id) return '互评入口只在比赛结束后 24 小时内开放。';
     return '';
   }
@@ -413,6 +420,8 @@
     return [
       '<section class="miniapp-home">',
       '  <div class="radar-wrap">',
+      '  <button class="radar-arrow radar-arrow-left" type="button" data-radar-arrow="prev" aria-label="上一张"></button>',
+      '  <button class="radar-arrow radar-arrow-right" type="button" data-radar-arrow="next" aria-label="下一张"></button>',
       '  <div class="radar-slider" aria-label="今日约球雷达">',
       '    <article class="radar-card radar-main">',
       '      <div class="radar-copy">',
@@ -458,12 +467,12 @@
       '  </div>',
       '    <div class="radar-scroll-hint"><span>左右滑动查看更多</span><i class="is-active"></i><i></i><i></i></div>',
       '  </div>',
-      '  <div class="home-search-row">',
+      '  <form class="home-search-row" data-venue-search-form>',
       '    <button class="location-pill" type="button" data-area-filter="all">南京</button>',
-      '    <button class="search-box" type="button" data-jump-view="venues">请输入场馆名称、地址</button>',
-      '    <button class="mini-icon-btn" type="button" data-jump-view="venues">地图</button>',
+      '    <input class="search-box" name="venue_search" value="' + h(state.venueSearch || '') + '" placeholder="请输入场馆名称、地址" autocomplete="off" />',
+      '    <button class="mini-icon-btn" type="submit">搜索</button>',
       '    <button class="mini-icon-btn" type="button" data-jump-view="messages">消息</button>',
-      '  </div>',
+      '  </form>',
       '  <div class="service-strip">',
       serviceTile('community', '社区', '找球友', 'messages'),
       serviceTile('team', '球队', '固定队', 'teams'),
@@ -582,10 +591,18 @@
   }
 
   function venuesView() {
+    var keyword = String(state.venueSearch || '').trim().toLowerCase();
+    var seenVenueKeys = new Set();
     var venues = state.data.venues.filter(function (venue) {
+      if (venue.status !== 'approved') return false;
+      var key = [venue.name, venue.address].join('|').toLowerCase();
+      if (seenVenueKeys.has(key)) return false;
+      seenVenueKeys.add(key);
       var okArea = state.venueFilter === 'all' || venue.area.indexOf(state.venueFilter) >= 0;
       var okSport = state.sportFilter === 'all' || (venue.sports || []).indexOf(state.sportFilter) >= 0;
-      return okArea && okSport;
+      var searchable = [venue.name, venue.address, venue.area, venue.contact].join(' ').toLowerCase();
+      var okKeyword = !keyword || searchable.indexOf(keyword) >= 0;
+      return okArea && okSport && okKeyword;
     });
     return [
       '<section class="section venue-shop-layout">',
@@ -593,7 +610,8 @@
       '    <div class="panel-title"><h3>附近可订场馆</h3><span>按样板区、运动类型筛选</span></div>',
       filterButtons(),
       '    <div class="sort-strip"><button class="is-active" type="button">综合排序</button><button type="button">离我最近</button><button type="button">价格优先</button><button type="button">周末可订</button></div>',
-      '    <div class="cards-grid">' + venues.map(venueCard).join('') + '</div>',
+      keyword ? '    <div class="filter-result-note">搜索：' + h(state.venueSearch) + '，找到 ' + h(venues.length) + ' 个场馆 <button type="button" data-clear-venue-search>清除</button></div>' : '',
+      '    <div class="cards-grid">' + (venues.length ? venues.map(venueCard).join('') : '<div class="empty">没有找到匹配场馆，换个关键词或清除筛选试试。</div>') + '</div>',
       '  </div>',
       mapPanel(state.data.venues),
       '</section>',
@@ -604,6 +622,7 @@
   function venueBookingPanel(venue) {
     var slots = venue.open_slot_ranges || [];
     var date = venue.booking_date || todayValue();
+    var blocked = actionLocked();
     return [
       '<div class="modal-backdrop" data-close-venue-booking>',
       '  <section class="venue-booking-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
@@ -613,6 +632,7 @@
       '      <span>' + h(venue.area) + ' / ' + money(venue.price_per_hour) + '/小时起</span>',
       '    </div>',
       '    <div class="panel-soft-block"><strong>预订说明</strong><p>先选日期，再选一个可用时段。系统会根据场馆开放时段和已有订单做占用校验，提交后生成核销码。</p></div>',
+      blocked ? '    <div class="panel-soft-block warning-block"><strong>信用分受限</strong><p>当前信用分低于 60，暂不能订场。系统会按每周 5 分恢复至 60 分。</p></div>' : '',
       '    <form class="booking-form" data-venue-booking-form>',
       '      <label class="field"><span>预订日期</span><input name="booking_date" type="date" value="' + h(date) + '" min="' + h(todayValue()) + '" /></label>',
       '      <div class="panel-title mini"><h3>可订时段</h3><span>根据场馆开放时段和订单占用自动过滤</span></div>',
@@ -627,7 +647,7 @@
       metric('预估费用', '待计算'),
       metric('状态', '待确认'),
       '      </div>',
-      '      <button class="primary-btn" type="submit" disabled data-submit-venue-book>确认并支付</button>',
+      '      <button class="primary-btn" type="submit" disabled data-submit-venue-book>' + (blocked ? '信用受限' : '确认并支付') + '</button>',
       '      <input type="hidden" name="booking_start_time" />',
       '      <input type="hidden" name="booking_end_time" />',
       '      <input type="hidden" name="venue_id" value="' + h(venue.id) + '" />',
@@ -651,16 +671,16 @@
 
   function filterButtons() {
     var areas = ['all', '南师附中江宁分校', '江宁大学城', '江宁开发区', '百家湖'];
-    var sports = [['all', '全部'], ['football', '足球'], ['basketball', '篮球']];
+    var sports = [['all', '全部项目'], ['football', '足球'], ['basketball', '篮球']];
     return [
-      '<div class="filter-row" style="margin-bottom:12px">',
-      areas.map(function (area) {
+      '<div class="venue-filter-panel">',
+      '  <div class="filter-group"><span>区域</span><div class="filter-row">' + areas.map(function (area) {
         var label = area === 'all' ? '全部区域' : area;
         return '<button class="pill-button ' + (state.venueFilter === area ? 'is-active' : '') + '" type="button" data-area-filter="' + h(area) + '">' + h(label) + '</button>';
-      }).join(''),
-      sports.map(function (item) {
+      }).join('') + '</div></div>',
+      '  <div class="filter-group"><span>项目</span><div class="filter-row">' + sports.map(function (item) {
         return '<button class="pill-button ' + (state.sportFilter === item[0] ? 'is-active' : '') + '" type="button" data-sport-filter="' + item[0] + '">' + item[1] + '</button>';
-      }).join(''),
+      }).join('') + '</div></div>',
       '</div>',
     ].join('');
   }
@@ -687,7 +707,7 @@
       '  <div style="min-width:128px;text-align:right">',
       '    <strong class="price">' + money(game.fee_per_person) + '</strong>',
       '    <button class="secondary-btn" type="button" data-game-detail="' + h(game.id) + '">详情</button>',
-      '    <button class="' + (game.is_joined || creditLocked() ? 'secondary-btn' : 'primary-btn') + '" type="button" data-open-join="' + h(game.id) + '"' + (game.is_joined || creditLocked() || !['forming', 'open'].includes(game.status) ? ' disabled' : '') + '>' + (game.is_joined ? '已报名' : creditLocked() ? '信用受限' : '报名支付') + '</button>',
+      '    <button class="' + (game.is_joined || publicJoinLocked() ? 'secondary-btn' : 'primary-btn') + '" type="button" data-open-join="' + h(game.id) + '"' + (game.is_joined || publicJoinLocked() || !['forming', 'open'].includes(game.status) ? ' disabled' : '') + '>' + (game.is_joined ? '已报名' : publicJoinLocked() ? '信用受限' : '报名支付') + '</button>',
       '    <button class="secondary-btn review-btn" type="button" data-review-game="' + h(game.id) + '">赛后互评</button>',
       '  </div>',
       '</article>',
@@ -750,7 +770,7 @@
   }
 
   function joinConfirmPanel(game) {
-    var locked = creditLocked();
+    var locked = publicJoinLocked();
     return [
       '<div class="modal-backdrop" data-close-join-confirm>',
       '  <section class="join-confirm-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
@@ -765,7 +785,7 @@
       metric('平均实力', oneDecimal(game.average_rating, 3) + '分'),
       metric('信用要求', locked ? '受限' : '正常'),
       '    </div>',
-      locked ? '    <div class="panel-soft-block warning-block"><strong>信用分不足</strong><p>当前信用分 ' + h(creditScore()) + '，低于 80 分时暂不能报名、订场或发局。</p></div>' : '',
+      locked ? '    <div class="panel-soft-block warning-block"><strong>信用分不足</strong><p>当前信用分 ' + h(creditScore()) + '，低于 80 分时暂不能参与公开局；低于 60 分时不能发局或订场。</p></div>' : '',
       '    <label class="check-row"><input type="checkbox" checked disabled /> 我确认按时到场，若爽约将影响信用分</label>',
       '    <button class="primary-btn" type="button" data-join-game="' + h(game.id) + '"' + (locked ? ' disabled' : '') + '>确认报名，生成待支付订单</button>',
       '  </section>',
@@ -775,7 +795,11 @@
 
   function paymentPanel(order) {
     var next = orderNextAction(order);
-    var canPay = order.status === 'pending_payment';
+    var payLocked = order.game_id ? publicJoinLocked() : actionLocked();
+    var payLockText = order.game_id
+      ? '当前信用分低于 80，暂不能支付公开局报名订单。'
+      : '当前信用分低于 60，暂不能支付订场订单。';
+    var canPay = order.status === 'pending_payment' && !payLocked;
     var canCancel = order.status === 'pending_payment' || order.status === 'paid';
     return [
       '<div class="modal-backdrop" data-close-payment>',
@@ -793,9 +817,10 @@
       '    </div>',
       orderTimeline(order),
       '    <div class="panel-soft-block"><strong>' + h(next.title) + '</strong><p>' + h(next.body) + '</p></div>',
+      payLocked && order.status === 'pending_payment' ? '    <div class="panel-soft-block warning-block"><strong>信用分受限</strong><p>' + h(payLockText) + '</p></div>' : '',
       '    <div class="payment-actions">',
       canCancel ? '      <button class="secondary-btn" type="button" data-cancel-order="' + h(order.order_id || order.id) + '">' + (order.status === 'paid' ? '申请退款/取消' : '取消订单') + '</button>' : '',
-      canPay ? '      <button class="primary-btn" type="button" data-pay-order="' + h(order.order_id || order.id) + '">模拟微信支付</button>' : '      <button class="primary-btn" type="button" disabled>' + statusLabel(order.status || 'pending_payment') + '</button>',
+      order.status === 'pending_payment' ? '      <button class="primary-btn" type="button" data-pay-order="' + h(order.order_id || order.id) + '"' + (canPay ? '' : ' disabled') + '>' + (payLocked ? '信用受限' : '模拟微信支付') + '</button>' : '      <button class="primary-btn" type="button" disabled>' + statusLabel(order.status || 'pending_payment') + '</button>',
       '    </div>',
       '  </section>',
       '</div>',
@@ -804,11 +829,13 @@
 
   function createView() {
     var approved = state.data.venues.filter(function (venue) { return venue.status === 'approved'; });
+    var blocked = actionLocked();
     var defaultStart = localDateTimeValue(1, 19, 0);
     var defaultEnd = localDateTimeValue(1, 21, 0);
     return [
       '<section class="section form-panel">',
       '  <h3>创建足球/篮球局</h3>',
+      blocked ? '  <div class="panel-soft-block warning-block"><strong>信用分受限</strong><p>当前信用分低于 60，暂不能发起球局。先通过自动恢复、到场核销或队友好评恢复信用。</p></div>' : '',
       '  <form class="form-grid" data-create-game>',
       field('球局标题', '<input name="title" required maxlength="120" value="江宁大学城周末约球" />'),
       field('运动类型', '<select name="sport"><option value="football">足球</option><option value="basketball">篮球</option></select>'),
@@ -818,7 +845,7 @@
       field('人数上限', '<input name="capacity" type="number" min="2" max="50" value="10" />'),
       field('AA 费用/人', '<input name="fee_per_person" type="number" min="0" value="30" />'),
       field('备注', '<textarea name="notes" maxlength="500">强度适中，报名后请准时到场。</textarea>'),
-      '    <button class="primary-btn" type="submit">发布球局</button>',
+      '    <button class="primary-btn" type="submit"' + (blocked ? ' disabled' : '') + '>' + (blocked ? '信用受限' : '发布球局') + '</button>',
       '  </form>',
       '</section>',
     ].join('');
@@ -1020,7 +1047,8 @@
       profileBackTitle('信用记录', '黑客松演示账户'),
       '    <div class="profile-credit-row"><span>当前信用分</span><strong>' + h(credit) + '</strong><em>' + (credit >= 90 ? '守约良好' : credit >= 80 ? '可以报名' : '报名受限') + '</em></div>',
       '    <div class="profile-credit-row"><span>参与场次</span><strong>' + h(played) + '</strong><em>累计到场越多，可信度越高</em></div>',
-      '    <div class="profile-credit-row"><span>爽约次数</span><strong>' + h(me.no_shows || 0) + '</strong><em>低信用会限制报名和订场</em></div>',
+      '    <div class="profile-credit-row"><span>爽约次数</span><strong>' + h(me.no_shows || 0) + '</strong><em>低于 80 会限制公开局报名，低于 60 会限制发局和订场</em></div>',
+      '    <div class="panel-soft-block"><strong>信用规则</strong><p>新用户初始 100 分；开局前 24 小时内取消扣 5 分，前 1 小时内取消或无故缺席扣 20 分；按时到场 +3，发起真实球局 +2，获得队友好评 +1。低于 60 分时每周自动恢复 5 分，最高恢复到 60 分。</p></div>',
       '  </div>',
       '</section>',
     ].join('');
@@ -1116,7 +1144,7 @@
   function supportReply(question) {
     if (question.indexOf('报名') >= 0) return '在首页或“看球局”选择一场球局，点击报名支付即可。演示版会生成待支付订单和核销码。';
     if (question.indexOf('取消') >= 0) return '正式版会在开场前设置可取消时间；当前演示版可用“演示重置”清空待支付/测试订单。';
-    if (question.indexOf('信用') >= 0) return '按时到场并完成核销会保持或恢复信用分；爽约会扣分，低于 80 分会限制报名。';
+    if (question.indexOf('信用') >= 0) return '按时到场、组织球局和获得队友好评都会恢复信用分；爽约会扣分，低于 80 分会限制公开局报名，低于 60 分会限制发局和订场。';
     if (question.indexOf('发起') >= 0 || question.indexOf('组局') >= 0) return '点击底部“发局”或首页“立即组局”，填写时间、地点、人数和费用后提交。';
     return '已收到。黑客松演示版先用本地模拟客服，正式版可接入微信客服或人工工单。';
   }
@@ -1270,7 +1298,7 @@
       '      <button type="button" data-jump-view="data">6. 提交运动档案</button>',
       '    </div>',
       '    <div class="panel-soft-block"><strong>当前账号</strong><p>' + h((session() || {}).username || (session() || {}).name || 'demo_player') + ' / 信用分 ' + h(me.credit_score || 100) + '。这条路径覆盖主闭环，并保留后续能力入口。</p></div>',
-      creditLocked() ? '    <div class="panel-soft-block warning-block"><strong>信用分受限</strong><p>当前分数低于 80，报名、订场和发局入口会被拦截。</p></div>' : '',
+      publicJoinLocked() ? '    <div class="panel-soft-block warning-block"><strong>信用分受限</strong><p>当前分数低于 80，公开局报名会被拦截；低于 60 时发局和订场也会被拦截。</p></div>' : '',
       '  </div>',
       '</section>',
     ].join('');
@@ -1426,11 +1454,11 @@
       '  <div class="form-panel">',
       '    <h3>新增合作场馆</h3>',
       '    <form class="form-grid" data-create-venue>',
-      field('场馆名称', '<input name="name" required value="江宁新合作球馆" />'),
-      field('区域', '<input name="area" required value="江宁大学城" />'),
-      field('地址', '<input name="address" required value="南京市江宁区" />'),
+      field('场馆名称', '<input name="name" required placeholder="例如：江宁合作足球馆" />'),
+      field('区域', '<input name="area" required placeholder="例如：江宁大学城" />'),
+      field('地址', '<input name="address" required placeholder="请输入详细地址" />'),
       field('每小时价格', '<input name="price_per_hour" type="number" value="200" />'),
-      field('联系人', '<input name="contact" value="场馆负责人" />'),
+      field('联系人', '<input name="contact" placeholder="联系人 / 电话" />'),
       field('场地类型', '<select name="sports"><option value="football,basketball">足球 + 篮球</option><option value="football">足球</option><option value="basketball">篮球</option></select>'),
       '      <button class="primary-btn" type="submit">提交审核</button>',
       '    </form>',
@@ -1473,7 +1501,7 @@
     var metrics = state.data.metrics || {};
     return [
       '<section class="section">',
-      '  <div class="panel-title"><h3>数据看板</h3><span>上线 10 天 KPI 复盘</span><button class="secondary-btn small-btn" type="button" data-demo-reset>重置演示账号</button></div>',
+      '  <div class="panel-title"><h3>数据看板</h3><span>上线 10 天 KPI 复盘</span><button class="secondary-btn small-btn" type="button" data-demo-reset>清理当前账号数据</button></div>',
       '  <div class="metric-grid">',
       metric('今日订单', metrics.today_orders || 0),
       metric('今日收入', money(metrics.today_income || 0)),
@@ -1595,6 +1623,13 @@
     var hint = app.querySelector('.radar-scroll-hint');
     if (!slider || !hint) return;
     var dots = Array.from(hint.querySelectorAll('i'));
+    var arrows = Array.from(app.querySelectorAll('[data-radar-arrow]'));
+    arrows.forEach(function (arrow) {
+      arrow.addEventListener('click', function () {
+        var direction = arrow.getAttribute('data-radar-arrow') === 'prev' ? -1 : 1;
+        slider.scrollBy({ left: direction * slider.clientWidth, behavior: 'smooth' });
+      });
+    });
     var update = function () {
       var pageWidth = Math.max(1, slider.clientWidth);
       var index = Math.max(0, Math.min(dots.length - 1, Math.round(slider.scrollLeft / pageWidth)));
@@ -1627,6 +1662,32 @@
         } catch (error) {
           showToast(error.message);
         }
+      });
+    });
+
+    var venueSearchForm = app.querySelector('[data-venue-search-form]');
+    if (venueSearchForm) {
+      var searchInput = venueSearchForm.querySelector('input[name="venue_search"]');
+      if (searchInput) {
+        searchInput.addEventListener('input', function () {
+          state.venueSearch = searchInput.value;
+        });
+      }
+      venueSearchForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        state.venueSearch = (searchInput && searchInput.value || '').trim();
+        state.userView = 'venues';
+        state.mode = 'user';
+        clearOverlays();
+        track('venue_search', { metadata: { keyword: state.venueSearch } });
+        render();
+      });
+    }
+
+    app.querySelectorAll('[data-clear-venue-search]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.venueSearch = '';
+        render();
       });
     });
 
@@ -1816,13 +1877,13 @@
 
     app.querySelectorAll('[data-demo-reset]').forEach(function (button) {
       button.addEventListener('click', async function () {
-        if (!window.confirm('确认重置演示账号？将恢复信用分并清理待支付订单。')) return;
+        if (!window.confirm('确认清理当前账号数据？将删除该账号的订单、报名、通知和测试记录，信用分恢复为 100。')) return;
         try {
           await api('/api/sports-app/admin/demo-reset', { method: 'POST', body: '{}' });
           await loadBootstrap();
           if (state.mode === 'admin') await refreshModeData();
           render();
-          showToast('演示账号已重置');
+          showToast('当前账号数据已清理');
         } catch (error) {
           showToast(error.message);
         }
@@ -1888,7 +1949,7 @@
 
       function syncSubmitState() {
         var hasRange = bookingStartInput.value && bookingEndInput.value;
-        submitButton.disabled = !hasRange;
+        submitButton.disabled = !hasRange || actionLocked();
       }
 
       bookingDateInput.addEventListener('change', function () {

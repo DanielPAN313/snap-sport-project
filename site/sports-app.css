@@ -114,6 +114,25 @@ button {
   gap: 8px;
 }
 
+.venue-filter-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.filter-group {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.filter-group > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .mode-tabs button,
 .view-tabs button,
 .pill-button {
@@ -237,8 +256,64 @@ button {
 }
 
 .radar-wrap {
+  position: relative;
   display: grid;
   gap: 8px;
+}
+
+.radar-arrow {
+  position: absolute;
+  top: calc(50% - 18px);
+  z-index: 4;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 10px 24px rgba(28, 49, 35, 0.18);
+  cursor: pointer;
+  transform: translateY(-50%) scale(0.96);
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.radar-wrap:hover .radar-arrow,
+.radar-wrap:focus-within .radar-arrow {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) scale(1);
+}
+
+.radar-arrow:hover {
+  background: #fff;
+}
+
+.radar-arrow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid var(--green-dark);
+  border-left: 2px solid var(--green-dark);
+}
+
+.radar-arrow-left {
+  left: 12px;
+}
+
+.radar-arrow-left::before {
+  transform: translateX(2px) rotate(-45deg);
+}
+
+.radar-arrow-right {
+  right: 12px;
+}
+
+.radar-arrow-right::before {
+  transform: translateX(-2px) rotate(135deg);
 }
 
 .radar-slider {
@@ -528,6 +603,17 @@ button {
   font-weight: 900;
 }
 
+.search-box {
+  width: 100%;
+  min-width: 0;
+  outline: none;
+}
+
+.search-box:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(18, 130, 79, 0.12);
+}
+
 .location-pill {
   color: #fff;
   border-color: var(--green);
@@ -535,8 +621,34 @@ button {
 }
 
 .search-box {
-  color: var(--muted);
+  color: var(--ink);
   text-align: left;
+}
+
+.search-box::placeholder {
+  color: var(--muted);
+}
+
+.filter-result-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.filter-result-note button {
+  border: 0;
+  color: var(--green-dark);
+  background: transparent;
+  font-weight: 900;
 }
 
 .mini-icon-btn {
