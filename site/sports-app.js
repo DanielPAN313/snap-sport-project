@@ -30,7 +30,9 @@
     supportOpen: false,
     supportMessages: [],
     highlightOrderId: null,
+    aiDemoAnalyzed: false,
     toast: '',
+    navStack: [],
   };
 
   var app = document.getElementById('app');
@@ -340,15 +342,17 @@
   function topbar() {
     var user = session();
     var username = user ? user.username || user.name : '未登录';
+    var canGoBack = canNavigateBack();
     return [
       '<header class="topbar">',
-      '  <div class="brand">',
-      '    <div class="brand-mark">NYQ</div>',
-      '    <div><h1>宁约球</h1><p>南京高校/园区约局 + 场馆预订</p></div>',
+      '  <div class="topbar-left">',
+      '    <button type="button" class="topbar-back-icon' + (canGoBack ? '' : ' is-hidden') + '" data-nav-back aria-label="返回上一级"' + (canGoBack ? '' : ' disabled') + '><span></span></button>',
+      '    <div class="brand">',
+      '      <div class="brand-mark">NYQ</div>',
+      '      <div><h1>宁约球</h1><p>南京高校/园区约局 + 场馆预订</p></div>',
+      '    </div>',
       '  </div>',
       '  <div class="topbar-actions">',
-      '    <button type="button" class="topbar-home" data-user-view="home">回到主页</button>',
-      '    <button type="button" class="topbar-home" data-user-view="venues">订球场</button>',
       '    <button type="button" class="session-chip" data-user-view="me" aria-label="进入个人中心">',
       '      <span class="session-avatar">' + h(initials(username)) + '</span>',
       '      <span class="session-copy"><strong>' + h(username) + '</strong><em>player / signed in</em></span>',
@@ -386,7 +390,7 @@
     return [
       '<div class="panel-title profile-back-title">',
       '  <div><h3>' + h(title) + '</h3><span>' + h(subtitle || '') + '</span></div>',
-      '  <button class="secondary-btn small-btn" type="button" data-user-view="me">返回个人中心</button>',
+      '  <button class="secondary-btn small-btn profile-inline-back" type="button" data-nav-back>‹ 返回</button>',
       '</div>',
     ].join('');
   }
@@ -399,6 +403,86 @@
     state.venueBooking = null;
     state.paymentConfirm = null;
     state.supportOpen = false;
+  }
+
+  function currentNavSnapshot() {
+    return {
+      mode: state.mode,
+      userView: state.userView,
+      venueFilter: state.venueFilter,
+      sportFilter: state.sportFilter,
+      venueSearch: state.venueSearch,
+    };
+  }
+
+  function sameNavSnapshot(a, b) {
+    return a && b
+      && a.mode === b.mode
+      && a.userView === b.userView
+      && a.venueFilter === b.venueFilter
+      && a.sportFilter === b.sportFilter
+      && a.venueSearch === b.venueSearch;
+  }
+
+  function hasOpenOverlay() {
+    return Boolean(
+      state.reviewDetail
+      || state.playerProfile
+      || state.gameDetail
+      || state.joinConfirm
+      || state.venueBooking
+      || state.paymentConfirm
+      || state.supportOpen
+    );
+  }
+
+  function canNavigateBack() {
+    return hasOpenOverlay() || state.navStack.length > 0 || state.userView !== 'home';
+  }
+
+  function pushNavSnapshot(snapshot) {
+    var previous = snapshot || currentNavSnapshot();
+    var last = state.navStack[state.navStack.length - 1];
+    if (!sameNavSnapshot(last, previous)) state.navStack.push(previous);
+    if (state.navStack.length > 20) state.navStack.shift();
+  }
+
+  function goToUserView(view, options) {
+    var nextView = view || 'home';
+    var shouldRemember = !(options && options.replace);
+    var before = currentNavSnapshot();
+    if (shouldRemember && before.userView !== nextView) pushNavSnapshot(before);
+    state.mode = 'user';
+    state.userView = nextView;
+    clearOverlays();
+    if (nextView === 'home') {
+      state.navStack = [];
+      track('home_view');
+    }
+    if (nextView === 'venues') track('venue_list_view');
+    if (nextView === 'games') track('game_list_view');
+  }
+
+  function navigateBack() {
+    if (hasOpenOverlay()) {
+      clearOverlays();
+      render();
+      return;
+    }
+    var previous = state.navStack.pop();
+    if (previous) {
+      state.mode = previous.mode || 'user';
+      state.userView = previous.userView || 'home';
+      state.venueFilter = previous.venueFilter || 'all';
+      state.sportFilter = previous.sportFilter || 'all';
+      state.venueSearch = previous.venueSearch || '';
+    } else {
+      state.mode = 'user';
+      state.userView = 'home';
+      state.venueSearch = '';
+    }
+    clearOverlays();
+    render();
   }
 
   function hero() {
@@ -430,7 +514,7 @@
       '        <div class="radar-actions"><button class="primary-btn radar-primary" type="button" data-jump-view="create">立即组局</button><button class="secondary-btn" type="button" data-jump-view="venues">先订场地</button></div>',
       '        <div class="radar-flow"><span>找场地</span><i></i><span>报名支付</span><i></i><span>到场核销</span><i></i><span>信用累计</span></div>',
       '      </div>',
-      '      <button class="radar-visual" type="button" data-open-venue-book="' + h(hotVenue.id || '') + '">',
+      '      <button class="radar-visual" type="button" data-book-venue="' + h(hotVenue.id || '') + '">',
       '        <img src="' + h(hotVenue.cover_url || 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=1600&q=80') + '" alt="' + h(hotVenue.name || '南京合作场馆') + '" />',
       '        <span>' + h(hotVenue.name || '南京合作场馆') + '</span>',
       '      </button>',
@@ -441,7 +525,7 @@
       '        <h3>南师附中 / 大学城 / 开发区</h3>',
       '        <p>优先展示可订时段和附近球局，适合现场快速演示。</p>',
       '      </div>',
-      '      <div class="radar-map-visual" aria-label="模拟地图">',
+      '      <div class="radar-map-visual" role="button" tabindex="0" data-jump-view="venues" aria-label="查看江宁热区场馆">',
       '        <div class="mock-map-route"></div>',
       '        <div class="mock-map-zone zone-a">南师附中</div>',
       '        <div class="mock-map-zone zone-b">大学城</div>',
@@ -459,10 +543,10 @@
       '        <p>按时间和实力匹配推荐，报名后生成待支付订单。</p>',
       '        <button class="primary-btn radar-primary" type="button" data-jump-view="games">去看球局</button>',
       '      </div>',
-      '      <div class="radar-visual radar-join-visual">',
+      '      <button class="radar-visual radar-join-visual" type="button" data-jump-view="games">',
       '        <img src="https://images.unsplash.com/photo-1518091043644-c1d4457512c6?auto=format&fit=crop&w=1200&q=80" alt="待加入球局" />',
       '        <span>附近球局 · 即将开场</span>',
-      '      </div>',
+      '      </button>',
       '    </article>',
       '  </div>',
       '    <div class="radar-scroll-hint"><span>左右滑动查看更多</span><i class="is-active"></i><i></i><i></i></div>',
@@ -485,9 +569,9 @@
       '    <div class="home-game-list">' + nextGames.map(homeGameCard).join('') + '</div>',
       '  </section>',
       '  <div class="home-mini-grid">',
-      '    <article class="mini-promo"><span class="tag blue">好馆尝鲜</span><strong>精选合作场馆</strong><p>先看离你近的，再看价格和时段。</p></article>',
-      '    <article class="mini-promo"><span class="tag">球友笔记</span><strong>记录你的出勤</strong><p>签到、报名、守约都能追踪。</p></article>',
-      '    <article class="mini-promo"><span class="tag orange">球队管理</span><strong>固定队伍入口</strong><p>队长可建队，成员可加入。</p></article>',
+      '    <button type="button" class="mini-promo" data-jump-view="venues"><span class="tag blue">好馆尝鲜</span><strong>精选合作场馆</strong><p>先看离你近的，再看价格和时段。</p><em>去订场</em></button>',
+      '    <button type="button" class="mini-promo" data-jump-view="credit"><span class="tag">球友笔记</span><strong>记录你的出勤</strong><p>签到、报名、守约都能追踪。</p><em>看信用</em></button>',
+      '    <button type="button" class="mini-promo" data-jump-view="teams"><span class="tag orange">球队管理</span><strong>固定队伍入口</strong><p>队长可建队，成员可加入。</p><em>去球队</em></button>',
       '  </div>',
       '  <section class="section">',
       '    <div class="panel-title"><h3>推荐场馆</h3><button class="text-link" type="button" data-jump-view="venues">更多</button></div>',
@@ -522,7 +606,7 @@
 
   function homeVenueCard(venue) {
     return [
-      '<button class="home-venue-card" type="button" data-open-venue-book="' + h(venue.id) + '">',
+      '<button class="home-venue-card" type="button" data-book-venue="' + h(venue.id) + '">',
       '  <img src="' + h(venue.cover_url || 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=1200&q=80') + '" alt="' + h(venue.name) + '" />',
       '  <div class="home-venue-body">',
       '    <div class="item-head"><h4>' + h(venue.name) + '</h4><span class="tag ' + (venue.status === 'approved' ? '' : 'gray') + '">' + statusLabel(venue.status) + '</span></div>',
@@ -1203,16 +1287,26 @@
   function aiClipsView() {
     var clips = state.data.clips || [];
     var games = state.data.games || [];
+    var analyzed = state.aiDemoAnalyzed;
     return [
       '<section class="section layout-2">',
       '  <div class="panel ai-panel">',
-      '    <div class="panel-title"><h3>高光集锦</h3><span>精彩片段快速提交</span></div>',
-      '    <div class="feature-hero ai-hero">',
-      '      <div><span class="tag orange">精彩瞬间</span><h4>上传一段进球 / 训练视频，生成高光任务</h4><p>提交后会进入处理队列，后续可与合作场馆摄像头同步，生成进球片段、出界片段和比赛集锦。</p></div>',
+      '    <div class="panel-title"><h3>AI 高光集锦</h3><span>进球识别 Demo</span></div>',
+      '    <div class="ai-demo-player">',
+      '      <video src="/assets/snap-goal-demo.mp4" controls playsinline preload="metadata"></video>',
+      '      <div class="ai-demo-overlay ' + (analyzed ? 'is-done' : '') + '">',
+      '        <span>' + (analyzed ? '高光已生成' : '待分析') + '</span>',
+      '        <strong>' + (analyzed ? '识别到 1 次进球事件' : '上传进球视频，模拟端侧 AI 识别') + '</strong>',
+      '      </div>',
       '    </div>',
+      '    <div class="ai-action-row">',
+      '      <button class="primary-btn" type="button" data-run-ai-demo>' + (analyzed ? '重新分析' : '开始 AI 分析') + '</button>',
+      '      <button class="secondary-btn" type="button" data-seek-goal-demo>跳到进球片段</button>',
+      '    </div>',
+      analyzed ? aiDemoResultCard() : aiDemoPendingCard(),
       '    <form class="form-grid" data-create-clip>',
       field('关联球局', '<select name="game_id"><option value="">不关联球局</option>' + games.map(function (game) { return '<option value="' + h(game.id) + '">' + h(game.title) + '</option>'; }).join('') + '</select>'),
-      field('视频链接/文件名', '<input name="video_url" value="weekend-goal-clip.mp4" />'),
+      field('视频链接/文件名', '<input name="video_url" value="snap-goal-demo.mp4" />'),
       field('识别类型', '<select name="clip_type"><option value="goal_detection">进球识别</option><option value="highlight_reel">自动高光集锦</option><option value="heatmap">跑动热图占位</option></select>'),
       '      <button class="primary-btn" type="submit">提交任务</button>',
       '    </form>',
@@ -1222,6 +1316,34 @@
       clipList(clips),
       '  </div>',
       '</section>',
+    ].join('');
+  }
+
+  function aiDemoPendingCard() {
+    return [
+      '<div class="ai-demo-card">',
+      '  <span class="tag orange">Demo 模式</span>',
+      '  <h4>现场演示路径</h4>',
+      '  <p>点击“开始 AI 分析”后，系统会模拟端侧视频理解流程，生成进球时间点、高光片段和可分享卡片。</p>',
+      '  <div class="ai-demo-steps"><span>上传视频</span><i></i><span>识别进球</span><i></i><span>生成高光</span></div>',
+      '</div>',
+    ].join('');
+  }
+
+  function aiDemoResultCard() {
+    return [
+      '<div class="ai-result-grid">',
+      '  <article><span>识别结果</span><strong>进球 1 次</strong><p>模型判断：禁区前沿射门形成有效进球。</p></article>',
+      '  <article><span>高光片段</span><strong>00:08 - 00:22</strong><p>自动保留进球前 8 秒和进球后庆祝片段。</p></article>',
+      '  <article><span>传播建议</span><strong>江宁周末球局高光</strong><p>适合发朋友圈/社群，用于吸引下一场报名。</p></article>',
+      '</div>',
+      '<div class="ai-timeline">',
+      '  <div><span style="left:16%"></span><em style="left:16%">起脚</em><span class="is-goal" style="left:48%"></span><em style="left:48%">进球</em><span style="left:76%"></span><em style="left:76%">庆祝</em></div>',
+      '</div>',
+      '<div class="ai-share-card">',
+      '  <div><span class="tag">可分享</span><h4>AI 已生成进球高光</h4><p>1 次进球 · 14 秒高光 · SnapSport 自动生成</p></div>',
+      '  <button class="secondary-btn" type="button" data-profile-toast="演示版已生成分享卡片，正式版可保存到相册">保存分享卡</button>',
+      '</div>',
     ].join('');
   }
 
@@ -1648,13 +1770,7 @@
     bindRadarSlider();
     app.querySelectorAll('[data-mode]').forEach(function (button) {
       button.addEventListener('click', async function () {
-        state.mode = 'user';
-        if (button.hasAttribute('data-user-view')) {
-          state.userView = button.getAttribute('data-user-view');
-        } else {
-          state.userView = 'home';
-        }
-        clearOverlays();
+        goToUserView(button.getAttribute('data-user-view') || 'home');
         render();
         try {
           await loadBootstrap();
@@ -1676,9 +1792,7 @@
       venueSearchForm.addEventListener('submit', function (event) {
         event.preventDefault();
         state.venueSearch = (searchInput && searchInput.value || '').trim();
-        state.userView = 'venues';
-        state.mode = 'user';
-        clearOverlays();
+        goToUserView('venues');
         track('venue_search', { metadata: { keyword: state.venueSearch } });
         render();
       });
@@ -1695,21 +1809,26 @@
       button.addEventListener('click', function () {
         var projectFilter = button.getAttribute('data-project-filter');
         if (projectFilter) state.sportFilter = projectFilter;
-        state.userView = button.getAttribute('data-user-view') || button.getAttribute('data-jump-view');
-        state.mode = 'user';
-        clearOverlays();
-        if (state.userView === 'home') track('home_view');
-        if (state.userView === 'venues') track('venue_list_view');
-        if (state.userView === 'games') track('game_list_view');
+        goToUserView(button.getAttribute('data-user-view') || button.getAttribute('data-jump-view'));
         render();
+      });
+      button.addEventListener('keydown', function (event) {
+        if (!['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        button.click();
+      });
+    });
+
+    app.querySelectorAll('[data-nav-back]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (button.disabled) return;
+        navigateBack();
       });
     });
 
     app.querySelectorAll('[data-return-home]').forEach(function (button) {
       button.addEventListener('click', async function () {
-        state.mode = 'user';
-        state.userView = 'home';
-        clearOverlays();
+        goToUserView('home', { replace: true });
         render();
         try {
           await loadBootstrap();
@@ -1838,7 +1957,7 @@
           var result = await api('/api/sports-app/orders/' + button.getAttribute('data-pay-order') + '/pay', { method: 'POST', body: '{}' });
           state.paymentConfirm = null;
           await loadBootstrap();
-          state.userView = 'orders';
+          goToUserView('orders');
           state.highlightOrderId = result.order_id;
           render();
           showToast('支付成功，已跳转到我的订单，核销码 ' + result.checkin_code);
@@ -1901,6 +2020,7 @@
     app.querySelectorAll('[data-game-detail]').forEach(function (button) {
       button.addEventListener('click', async function () {
         try {
+          if (state.userView === 'home') goToUserView('games');
           state.gameDetail = await api('/api/sports-app/games/' + button.getAttribute('data-game-detail'));
           render();
         } catch (error) {
@@ -1918,7 +2038,7 @@
 
     app.querySelectorAll('[data-book-venue]').forEach(function (button) {
       button.addEventListener('click', async function () {
-        state.userView = 'venues';
+        goToUserView('venues');
         state.venueBooking = state.data.venues.find(function (venue) { return String(venue.id) === String(button.getAttribute('data-book-venue')); }) || null;
         render();
       });
@@ -2020,7 +2140,7 @@
         try {
           await api('/api/sports-app/games', { method: 'POST', body: JSON.stringify(body) });
           await loadBootstrap();
-          state.userView = 'games';
+          goToUserView('games');
           render();
           showToast('球局已发布，已写入数据库');
         } catch (error) {
@@ -2071,6 +2191,31 @@
       });
     }
 
+    var runAiDemo = app.querySelector('[data-run-ai-demo]');
+    if (runAiDemo) {
+      runAiDemo.addEventListener('click', function () {
+        state.aiDemoAnalyzed = true;
+        render();
+        showToast('AI 高光已生成');
+      });
+    }
+
+    var seekAiDemo = app.querySelector('[data-seek-goal-demo]');
+    if (seekAiDemo) {
+      seekAiDemo.addEventListener('click', function () {
+        if (!state.aiDemoAnalyzed) {
+          state.aiDemoAnalyzed = true;
+          render();
+        }
+        var video = app.querySelector('.ai-demo-player video');
+        if (video && typeof video.currentTime === 'number') {
+          video.currentTime = Math.min(Math.max(video.duration ? video.duration * 0.48 : 8, 0), video.duration || 9999);
+          video.play().catch(function () {});
+        }
+        showToast('已跳到进球片段');
+      });
+    }
+
     var createUploadForm = app.querySelector('[data-create-upload]');
     if (createUploadForm) {
       createUploadForm.addEventListener('submit', async function (event) {
@@ -2109,7 +2254,7 @@
           await api('/api/sports-app/orders/' + button.getAttribute('data-checkin-order') + '/checkin', { method: 'POST', body: '{}' });
           await loadOrders();
           await loadBootstrap();
-          state.userView = 'orders';
+          goToUserView('orders');
           state.highlightOrderId = button.getAttribute('data-checkin-order');
           render();
           showToast('核销成功，信用分已更新');

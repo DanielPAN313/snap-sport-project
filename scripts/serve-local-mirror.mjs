@@ -47,7 +47,7 @@ const json = (res, body, status = 200) => {
 const readJsonBody = async (req) => {
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
-  const raw = Buffer.concat(chunks).toString('utf8')
+  const raw = Buffer.concat(chunks).toString('utf8').replace(/^\uFEFF/, '').trim()
   return raw ? JSON.parse(raw) : {}
 }
 
@@ -512,8 +512,15 @@ const formatTimeOnly = (value) => {
 
 const combineDateTime = (dateValue, timeValue) => {
   if (!dateValue || !timeValue) return null
+  const directValue = String(timeValue).trim().replace(' ', 'T')
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(directValue)) {
+    const directDate = new Date(directValue)
+    return Number.isNaN(directDate.getTime()) ? null : directDate
+  }
   const [year, month, day] = String(dateValue).split('-').map((item) => Number(item))
-  const [hour, minute] = String(timeValue).split(':').map((item) => Number(item))
+  const timeMatch = String(timeValue).match(/(\d{1,2}):(\d{2})/)
+  const hour = timeMatch ? Number(timeMatch[1]) : NaN
+  const minute = timeMatch ? Number(timeMatch[2]) : NaN
   if (!year || !month || !day || Number.isNaN(hour) || Number.isNaN(minute)) return null
   return new Date(year, month - 1, day, hour, minute, 0, 0)
 }
@@ -1380,8 +1387,8 @@ const handleSportsApi = async (req, res, requestUrl) => {
       const [[venue]] = await pool.execute('SELECT * FROM sports_venue WHERE id = ? LIMIT 1', [venueId])
       if (!venue) return json(res, { ok: false, error: 'venue not found' }, 404)
       const bookingDate = text(body.booking_date, 20)
-      const bookingStartTime = text(body.booking_start_time, 10)
-      const bookingEndTime = text(body.booking_end_time, 10)
+      const bookingStartTime = text(body.booking_start_time, 40)
+      const bookingEndTime = text(body.booking_end_time, 40)
       const bookingStart = combineDateTime(bookingDate, bookingStartTime)
       const bookingEnd = combineDateTime(bookingDate, bookingEndTime)
       if (!bookingStart || !bookingEnd || bookingEnd <= bookingStart) {

@@ -78,6 +78,45 @@ button {
   backdrop-filter: blur(14px);
 }
 
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.topbar-back-icon {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.10);
+}
+
+.topbar-back-icon span::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 13px;
+  width: 10px;
+  height: 10px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.topbar-back-icon:not(:disabled):hover {
+  color: var(--green-dark);
+  background: var(--lime);
+}
+
+.topbar-back-icon.is-hidden {
+  display: none;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -154,15 +193,6 @@ button {
   color: var(--green-dark);
   border-color: var(--lime);
   background: var(--lime);
-}
-
-.topbar-home {
-  min-height: 36px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
-  padding: 8px 12px;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.08);
 }
 
 .session-chip {
@@ -943,6 +973,17 @@ button {
   background: #fff;
   text-align: left;
   box-shadow: 0 8px 22px rgba(28, 49, 35, 0.08);
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.home-game-card:hover,
+.home-venue-card:hover,
+.mini-promo:hover,
+.radar-visual:hover,
+.radar-map-visual:hover {
+  border-color: rgba(18, 130, 79, 0.36);
+  box-shadow: 0 14px 30px rgba(28, 49, 35, 0.13);
+  transform: translateY(-1px);
 }
 
 .home-game-card {
@@ -1025,11 +1066,15 @@ button {
 .mini-promo {
   display: grid;
   gap: 8px;
+  width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
+  color: var(--ink);
   background: #fff;
+  text-align: left;
   box-shadow: 0 8px 22px rgba(28, 49, 35, 0.08);
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .mini-promo strong {
@@ -1040,6 +1085,13 @@ button {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.mini-promo em {
+  color: var(--green);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .home-venue-card {
@@ -1316,6 +1368,180 @@ button {
   margin: 0;
   color: rgba(255, 255, 255, 0.86);
   line-height: 1.7;
+}
+
+.ai-demo-player {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #07150e;
+}
+
+.ai-demo-player video {
+  width: 100%;
+  display: block;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #07150e;
+}
+
+.ai-demo-overlay {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #fff;
+  background: rgba(8, 31, 20, 0.78);
+  backdrop-filter: blur(10px);
+}
+
+.ai-demo-overlay span {
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--green-dark);
+  background: var(--lime);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-demo-overlay.is-done span {
+  color: #fff;
+  background: var(--green);
+}
+
+.ai-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.ai-demo-card,
+.ai-share-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 14px;
+  background: var(--panel-soft);
+}
+
+.ai-demo-card h4,
+.ai-share-card h4 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.ai-demo-card p,
+.ai-share-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.ai-demo-steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-demo-steps i {
+  width: 26px;
+  height: 1px;
+  background: var(--line);
+}
+
+.ai-result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.ai-result-grid article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.ai-result-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-result-grid strong {
+  display: block;
+  margin: 6px 0;
+  font-size: 19px;
+}
+
+.ai-result-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-timeline {
+  margin: 10px 0 14px;
+  border-radius: 8px;
+  padding: 22px 14px 28px;
+  background: #edf5e9;
+}
+
+.ai-timeline > div {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: #cbdcc5;
+}
+
+.ai-timeline span {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--green);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 4px 10px rgba(28, 49, 35, 0.18);
+}
+
+.ai-timeline span.is-goal {
+  width: 20px;
+  height: 20px;
+  background: var(--orange);
+}
+
+.ai-timeline em {
+  position: absolute;
+  top: 18px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  transform: translateX(-50%);
+}
+
+.ai-share-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  background: #fff;
 }
 
 .data-hero {
@@ -3079,6 +3305,10 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .ai-result-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .profile-identity,
   .profile-shortcuts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3127,7 +3357,6 @@ th {
 
   .mode-tabs,
   .mode-tabs button,
-  .topbar-home,
   .session-chip,
   .view-tabs,
   .view-tabs button {
@@ -3272,7 +3501,8 @@ th {
   .game-detail-hero,
   .join-summary,
   .detail-player,
-  .message-card {
+  .message-card,
+  .ai-share-card {
     grid-template-columns: 1fr;
   }
 
@@ -3284,6 +3514,11 @@ th {
   .message-card,
   .profile-back-title {
     align-items: stretch;
+  }
+
+  .ai-demo-overlay {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .profile-back-title {
@@ -3300,6 +3535,15 @@ th {
 
   .action-row {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .ai-action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ai-result-grid {
+    grid-template-columns: 1fr;
   }
 
   .game-card .primary-btn,
