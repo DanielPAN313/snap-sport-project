@@ -2512,55 +2512,6 @@ th {
     radial-gradient(circle at right top, rgba(215, 243, 106, 0.16), transparent 42%);
 }
 
-.profile-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.profile-icon-btn {
-  width: 38px;
-  height: 38px;
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #fff;
-}
-
-.profile-icon-btn span {
-  position: relative;
-  width: 16px;
-  height: 16px;
-  display: block;
-}
-
-.profile-icon-bell::before,
-.profile-icon-phone::before,
-.profile-icon-gear::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: currentColor;
-  color: var(--green-dark);
-  mask-size: contain;
-  mask-repeat: no-repeat;
-  mask-position: center;
-}
-
-.profile-icon-bell::before {
-  mask-image: radial-gradient(circle at 50% 34%, #000 0 5px, transparent 5px), linear-gradient(#000, #000);
-}
-
-.profile-icon-phone::before {
-  mask-image: radial-gradient(circle, #000 0 5px, transparent 5px), linear-gradient(#000, #000);
-}
-
-.profile-icon-gear::before {
-  mask-image: radial-gradient(circle, #000 0 5px, transparent 5px);
-}
-
 .profile-identity {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -2694,17 +2645,31 @@ th {
   text-align: left;
 }
 
-.profile-shortcut span {
+.profile-shortcut-icon {
   width: 34px;
   height: 34px;
+  display: grid;
+  place-items: center;
   border-radius: 10px;
   background: var(--panel-soft);
+  color: var(--green-dark);
 }
 
-.shortcut-ball span,
-.shortcut-order span,
-.shortcut-shield span,
-.shortcut-star span {
+.profile-shortcut-icon svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.shortcut-ball .profile-shortcut-icon,
+.shortcut-order .profile-shortcut-icon,
+.shortcut-shield .profile-shortcut-icon,
+.shortcut-star .profile-shortcut-icon {
   background:
     linear-gradient(135deg, rgba(18, 130, 79, 0.16), rgba(215, 243, 106, 0.36));
 }
@@ -2743,8 +2708,22 @@ th {
 .profile-menu-icon {
   width: 26px;
   height: 26px;
+  display: grid;
+  place-items: center;
   border-radius: 8px;
+  color: var(--green-dark);
   background: linear-gradient(135deg, rgba(18, 130, 79, 0.14), rgba(39, 99, 235, 0.12));
+}
+
+.profile-menu-icon svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .profile-menu-item strong {
@@ -3452,11 +3431,6 @@ th {
   .support-input {
     grid-template-columns: 1fr;
   }
-
-  .profile-toolbar {
-    justify-content: flex-start;
-  }
-
   .profile-identity {
     gap: 12px;
   }

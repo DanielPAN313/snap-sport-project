@@ -1069,11 +1069,6 @@
     return [
       '<section class="profile-page">',
       '  <div class="profile-hero-card">',
-      '    <div class="profile-toolbar">',
-      '      <button type="button" class="profile-icon-btn" data-jump-view="messages" aria-label="消息"><span class="profile-icon-bell"></span></button>',
-      '      <button type="button" class="profile-icon-btn" data-open-support aria-label="联系客服"><span class="profile-icon-phone"></span></button>',
-      '      <button type="button" class="profile-icon-btn" data-profile-toast="设置功能将在正式版接入"><span class="profile-icon-gear"></span></button>',
-      '    </div>',
       '    <div class="profile-identity">',
       '      <span class="profile-avatar">' + h(initials(username)) + '</span>',
       '      <div class="profile-user-main">',
@@ -1186,18 +1181,34 @@
 
   function profileShortcut(key, title, desc, icon, view) {
     var attr = 'data-user-view="' + h(view || 'me') + '"';
-    return '<button type="button" class="profile-shortcut shortcut-' + h(icon) + '" ' + attr + '><span></span><strong>' + h(title) + '</strong><small>' + h(desc) + '</small></button>';
+    return '<button type="button" class="profile-shortcut shortcut-' + h(icon) + '" ' + attr + '><span class="profile-shortcut-icon">' + profileIcon(icon) + '</span><strong>' + h(title) + '</strong><small>' + h(desc) + '</small></button>';
   }
 
   function profileMenuItem(icon, title, desc, view, customAttr) {
     var attr = customAttr || ('data-user-view="' + h(view || 'home') + '"');
     return [
       '<button type="button" class="profile-menu-item menu-' + h(icon) + '" ' + attr + '>',
-      '  <span class="profile-menu-icon"></span>',
+      '  <span class="profile-menu-icon">' + profileIcon(icon) + '</span>',
       '  <strong>' + h(title) + '<small>' + h(desc) + '</small></strong>',
       '  <em>›</em>',
       '</button>',
     ].join('');
+  }
+
+  function profileIcon(name) {
+    var attrs = 'viewBox="0 0 24 24" aria-hidden="true" focusable="false"';
+    var icons = {
+      ball: '<rect x="4" y="5" width="13" height="14" rx="3"></rect><path d="M4 9h13M8 3v4M13 3v4"></path><circle cx="17" cy="16" r="4"></circle><path d="M17 12l2.4 1.8-.9 2.9h-3l-.9-2.9L17 12zM14 16.7l-1.1 1.7M20 16.7l1.1 1.7"></path>',
+      order: '<path d="M7 4h10a2 2 0 0 1 2 2v14l-2-1-2 1-2-1-2 1-2-1-2 1V6a2 2 0 0 1 2-2z"></path><path d="M9 8h6M9 12h6M9 16h4"></path>',
+      shield: '<path d="M12 3l7 3v5c0 4.4-2.8 7.7-7 10-4.2-2.3-7-5.6-7-10V6l7-3z"></path><path d="M9 12l2 2 4-5"></path>',
+      star: '<path d="M12 3.5l2.6 5.2 5.7.8-4.1 4 1 5.7L12 16.5l-5.1 2.7 1-5.7-4.1-4 5.7-.8L12 3.5z"></path>',
+      ai: '<circle cx="8" cy="16" r="3"></circle><path d="M8 13l1.8 1.3-.7 2.2H6.9l-.7-2.2L8 13z"></path><rect x="11" y="6" width="9" height="12" rx="2"></rect><path d="M14 10l4 2-4 2v-4z"></path>',
+      data: '<path d="M4 19V5"></path><path d="M4 19h16"></path><rect x="7" y="12" width="3" height="5" rx="1"></rect><rect x="12" y="8" width="3" height="9" rx="1"></rect><rect x="17" y="10" width="3" height="7" rx="1"></rect><circle cx="8" cy="6" r="2"></circle><path d="M10 7l3 2 4-3"></path>',
+      support: '<path d="M6 16a4 4 0 0 1-2-3.5C4 8.4 7.6 5 12 5s8 3.4 8 7.5A4 4 0 0 1 18 16"></path><path d="M6 13v3a2 2 0 0 0 2 2h1"></path><path d="M18 13v3a2 2 0 0 1-2 2h-1"></path><path d="M9 12h.01M15 12h.01M10 16h4"></path>',
+      feedback: '<path d="M5 5h14v10H9l-4 4V5z"></path><path d="M9 9h6M9 12h4"></path><path d="M18 18l2 2M20 18l-2 2"></path>',
+      setting: '<circle cx="12" cy="12" r="3"></circle><path d="M19 12a7.8 7.8 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a8.6 8.6 0 0 0-1.8-1L14.4 3h-4.8l-.3 3.1a8.6 8.6 0 0 0-1.8 1l-2.4-1-2 3.4 2 1.5a7.8 7.8 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a8.6 8.6 0 0 0 1.8 1l.3 3.1h4.8l.3-3.1a8.6 8.6 0 0 0 1.8-1l2.4 1 2-3.4-2-1.5a7.8 7.8 0 0 0 .1-1z"></path>',
+    };
+    return '<svg ' + attrs + '>' + (icons[name] || icons.star) + '</svg>';
   }
 
   function supportWindow() {
