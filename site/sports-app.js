@@ -29,6 +29,13 @@
     paymentConfirm: null,
     supportOpen: false,
     supportMessages: [],
+    searchOpen: false,
+    searchIntent: 'recommend',
+    settingsOpen: false,
+    profileEditOpen: false,
+    profileDemo: loadProfileDemo(),
+    friendAddOpen: false,
+    addedFriends: loadAddedFriends(),
     highlightOrderId: null,
     aiDemoAnalyzed: false,
     toast: '',
@@ -99,6 +106,75 @@
     return String(value == null ? '' : value).replace(/[&<>"]/g, function (char) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char];
     });
+  }
+
+  function loadProfileDemo() {
+    try {
+      return JSON.parse(window.localStorage.getItem('nyq_profile_demo') || '{}') || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveProfileDemo(next) {
+    state.profileDemo = Object.assign({}, state.profileDemo || {}, next || {});
+    window.localStorage.setItem('nyq_profile_demo', JSON.stringify(state.profileDemo));
+  }
+
+  function profileDemoValue(key, fallback) {
+    var value = state.profileDemo && state.profileDemo[key];
+    return value == null || value === '' ? fallback : value;
+  }
+
+  function loadAddedFriends() {
+    try {
+      var parsed = JSON.parse(window.localStorage.getItem('nyq_added_friends') || '[]');
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveAddedFriends(next) {
+    state.addedFriends = Array.isArray(next) ? next.map(String) : [];
+    window.localStorage.setItem('nyq_added_friends', JSON.stringify(state.addedFriends));
+  }
+
+  function friendRecommendations() {
+    return [
+      {
+        id: 'rec-li',
+        name: '小李',
+        city: '江宁大学城',
+        sport: '足球 / 7人制',
+        level: '进阶',
+        note: '周末常开局，守约率高',
+      },
+      {
+        id: 'rec-zhang',
+        name: '阿张',
+        city: '仙林校区',
+        sport: '篮球 / 3v3',
+        level: '稳健',
+        note: '偏晚间球局，愿意补位',
+      },
+      {
+        id: 'rec-wang',
+        name: '王同学',
+        city: '鼓楼',
+        sport: '足球 / 门将',
+        level: '专业',
+        note: '可做门将 / 组织约球',
+      },
+      {
+        id: 'rec-zhou',
+        name: '周队长',
+        city: '南师附中',
+        sport: '篮球 / 5v5',
+        level: '活跃',
+        note: '经常发局，队伍比较稳定',
+      },
+    ];
   }
 
   function sportLabel(value) {
@@ -303,6 +379,18 @@
     }, 2600);
   }
 
+  function showInlineToast(message) {
+    var existing = app.querySelector('.toast');
+    if (existing) existing.remove();
+    var toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+    app.appendChild(toast);
+    window.setTimeout(function () {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 1800);
+  }
+
   async function loadBootstrap() {
     var data = await api('/api/sports-app/bootstrap');
     state.data.venues = data.venues || [];
@@ -352,11 +440,22 @@
       '      <div><h1>宁约球</h1><p>南京高校/园区约局 + 场馆预订</p></div>',
       '    </div>',
       '  </div>',
+      '  <nav class="appbar-nav" aria-label="应用导航">',
+      '    <button type="button" data-user-view="home" class="' + (state.userView === 'home' ? 'is-active' : '') + '">首页</button>',
+      '    <button type="button" data-user-view="venues" class="' + (state.userView === 'venues' ? 'is-active' : '') + '">订场</button>',
+      '    <button type="button" data-user-view="games" class="' + (state.userView === 'games' ? 'is-active' : '') + '">球局</button>',
+      '    <button type="button" data-user-view="teams" class="' + (state.userView === 'teams' ? 'is-active' : '') + '">球队</button>',
+      '    <button type="button" data-user-view="messages" class="' + (state.userView === 'messages' ? 'is-active' : '') + '">消息</button>',
+      '    <button type="button" data-user-view="me" class="' + (state.userView === 'me' ? 'is-active' : '') + '">我的</button>',
+      '  </nav>',
       '  <div class="topbar-actions">',
+      '    <button type="button" class="appbar-quick appbar-search" data-focus-search aria-label="搜索场馆和球局"><span></span><em>搜索</em></button>',
+      '    <button type="button" class="appbar-create" data-user-view="create">发起组局</button>',
       '    <button type="button" class="session-chip" data-user-view="me" aria-label="进入个人中心">',
       '      <span class="session-avatar">' + h(initials(username)) + '</span>',
       '      <span class="session-copy"><strong>' + h(username) + '</strong><em>player / signed in</em></span>',
       '    </button>',
+      '    <button type="button" class="appbar-add-user" data-open-friend-add aria-label="添加球友"><span></span></button>',
       '  </div>',
       '</header>',
     ].join('');
@@ -403,6 +502,10 @@
     state.venueBooking = null;
     state.paymentConfirm = null;
     state.supportOpen = false;
+    state.searchOpen = false;
+    state.settingsOpen = false;
+    state.profileEditOpen = false;
+    state.friendAddOpen = false;
   }
 
   function currentNavSnapshot() {
@@ -433,6 +536,10 @@
       || state.venueBooking
       || state.paymentConfirm
       || state.supportOpen
+      || state.searchOpen
+      || state.settingsOpen
+      || state.profileEditOpen
+      || state.friendAddOpen
     );
   }
 
@@ -463,6 +570,104 @@
     if (nextView === 'games') track('game_list_view');
   }
 
+  function searchTargetView(keyword) {
+    var text = String(keyword || '').trim();
+    if (state.searchIntent === 'book') return 'venues';
+    if (state.searchIntent === 'play') return 'games';
+    if (!text) return 'home';
+    return /球局|组局|发局|约球|报名|缺人|待加入|开打|队友|比赛/.test(text) ? 'games' : 'venues';
+  }
+
+  function searchOverlay() {
+    if (!state.searchOpen) return '';
+    return [
+      '<div class="search-backdrop" data-close-search>',
+      '  <section class="search-shell" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
+      '    <div class="search-shell-head">',
+      '      <div><span>Search</span><h3>找场地，也找今晚的局</h3></div>',
+      '      <button type="button" data-close-search>关闭</button>',
+      '    </div>',
+      '    <form class="search-shell-form" data-venue-search-form>',
+      '      <span class="mega-search-icon" aria-hidden="true"></span>',
+      '      <input class="search-box" name="venue_search" value="' + h(state.venueSearch || '') + '" placeholder="' + h(searchPlaceholder()) + '" autocomplete="off" data-search-autofocus />',
+      '      <button class="primary-btn" type="submit">搜索</button>',
+      '    </form>',
+      '    <div class="search-intent-tabs" role="group" aria-label="搜索类型">',
+      searchIntentButton('recommend', '推荐'),
+      searchIntentButton('book', '订场'),
+      searchIntentButton('play', '组局'),
+      '    </div>',
+      '    <div class="search-quick-grid">',
+      searchQuickCards(),
+      '    </div>',
+      '  </section>',
+      '</div>',
+    ].join('');
+  }
+
+  function searchIntentButton(intent, label) {
+    return '<button type="button" data-search-intent="' + h(intent) + '" class="' + (state.searchIntent === intent ? 'is-active' : '') + '">' + h(label) + '</button>';
+  }
+
+  function searchPlaceholder() {
+    if (state.searchIntent === 'book') return '搜场馆、区域、时段';
+    if (state.searchIntent === 'play') return '搜球局、项目、缺人关键词';
+    return '搜足球、篮球、大学城、缺人球局';
+  }
+
+  function searchQuickCard(keyword, target, label) {
+    return '<button type="button" data-search-keyword="' + h(keyword) + '" data-search-target="' + h(target) + '"><strong>' + h(keyword) + '</strong><span>' + h(label) + '</span></button>';
+  }
+
+  function searchQuickCards() {
+    var cards = {
+      recommend: [
+        ['足球', 'games', '今晚足球局'],
+        ['篮球', 'games', '缺人篮球局'],
+        ['大学城', 'venues', '大学城场馆'],
+        ['黄金时段', 'venues', '晚间可订'],
+      ],
+      book: [
+        ['大学城', 'venues', '附近可订'],
+        ['黄金时段', 'venues', '晚间可订'],
+        ['室内场', 'venues', '天气友好'],
+        ['足球场', 'venues', '按项目筛选'],
+      ],
+      play: [
+        ['缺人球局', 'games', '马上加入'],
+        ['足球', 'games', '今晚开踢'],
+        ['篮球', 'games', '找队友'],
+        ['实力匹配', 'games', '更合适的局'],
+      ],
+    }[state.searchIntent] || [];
+    return cards.map(function (item) {
+      return searchQuickCard(item[0], item[1], item[2]);
+    }).join('');
+  }
+
+  function refreshSearchOverlay() {
+    var input = app.querySelector('.search-shell input[name="venue_search"]');
+    if (input) input.setAttribute('placeholder', searchPlaceholder());
+    app.querySelectorAll('[data-search-intent]').forEach(function (button) {
+      button.classList.toggle('is-active', button.getAttribute('data-search-intent') === state.searchIntent);
+    });
+    var quickGrid = app.querySelector('.search-quick-grid');
+    if (quickGrid) quickGrid.innerHTML = searchQuickCards();
+    bindSearchQuickCards();
+  }
+
+  function bindSearchQuickCards() {
+    app.querySelectorAll('[data-search-keyword]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.venueSearch = button.getAttribute('data-search-keyword') || '';
+        state.searchOpen = false;
+        goToUserView(button.getAttribute('data-search-target') || searchTargetView(state.venueSearch));
+        track('venue_search_quick', { metadata: { keyword: state.venueSearch } });
+        render();
+      });
+    });
+  }
+
   function navigateBack() {
     if (hasOpenOverlay()) {
       clearOverlays();
@@ -491,7 +696,7 @@
     var rating = ratingSummary();
     var approved = state.data.venues.filter(function (venue) { return venue.status === 'approved'; });
     var hotVenue = approved[0] || {};
-    var nextGames = (state.data.games || []).slice(0, 2);
+    var nextGames = (state.data.games || []).slice(0, 3);
     var featuredVenues = approved.slice(0, 3);
     var games = state.data.games || [];
     var availableGames = games.filter(function (game) {
@@ -503,82 +708,52 @@
     }, 0);
     return [
       '<section class="miniapp-home">',
-      '  <div class="radar-wrap">',
-      '  <button class="radar-arrow radar-arrow-left" type="button" data-radar-arrow="prev" aria-label="上一张"></button>',
-      '  <button class="radar-arrow radar-arrow-right" type="button" data-radar-arrow="next" aria-label="下一张"></button>',
-      '  <div class="radar-slider" aria-label="今日约球雷达">',
-      '    <article class="radar-card radar-main">',
-      '      <div class="radar-copy">',
-      '        <span class="radar-kicker">今日约球雷达</span>',
-      '        <h2><strong>今日可约 ' + h(availableGames) + ' 场</strong><span>' + h(hotVenues) + ' 个热门场馆 / ' + h(waitingPlayers) + ' 人待加入</span></h2>',
-      '        <div class="radar-actions"><button class="primary-btn radar-primary" type="button" data-jump-view="create">立即组局</button><button class="secondary-btn" type="button" data-jump-view="venues">先订场地</button></div>',
-      '        <div class="radar-flow"><span>找场地</span><i></i><span>报名支付</span><i></i><span>到场核销</span><i></i><span>信用累计</span></div>',
+      '  <section class="glass-hero">',
+      '    <div class="glass-hero-copy">',
+      '      <span class="glass-kicker">Snap Sport Live</span>',
+      '      <h2>今晚去哪开球？</h2>',
+      '      <p>把附近可约球局、热门场馆和待加入人数放到首屏，像真正的运动 App 一样，直接给你答案。</p>',
+      '      <div class="glass-hero-actions"><button class="primary-btn" type="button" data-jump-view="games">去看球局</button><button class="secondary-btn" type="button" data-jump-view="venues">先订场</button></div>',
+      '      <div class="glass-hero-stats">',
+      '        <button class="glass-stat" type="button" data-jump-view="games" aria-label="查看今日可约球局"><strong>' + h(availableGames) + '</strong><span>今日可约</span></button>',
+      '        <button class="glass-stat" type="button" data-jump-view="venues" aria-label="查看热门场馆"><strong>' + h(hotVenues) + '</strong><span>热门场馆</span></button>',
+      '        <button class="glass-stat" type="button" data-jump-view="games" aria-label="查看待加入球局"><strong>' + h(waitingPlayers) + '</strong><span>待加入</span></button>',
       '      </div>',
-      '      <button class="radar-visual" type="button" data-book-venue="' + h(hotVenue.id || '') + '">',
-      '        <img src="' + h(hotVenue.cover_url || 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=1600&q=80') + '" alt="' + h(hotVenue.name || '南京合作场馆') + '" />',
+      '    </div>',
+      '    <button class="glass-hero-visual" type="button" data-book-venue="' + h(hotVenue.id || '') + '">',
+      '      <img src="' + h(hotVenue.cover_url || 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=1600&q=80') + '" alt="' + h(hotVenue.name || '南京合作场馆') + '" />',
+      '      <div class="glass-hero-overlay">',
       '        <span>' + h(hotVenue.name || '南京合作场馆') + '</span>',
-      '      </button>',
-      '    </article>',
-      '    <article class="radar-card radar-map-card">',
-      '      <div class="radar-copy">',
-      '        <span class="radar-kicker">江宁热区</span>',
-      '        <h3>南师附中 / 大学城 / 开发区</h3>',
-      '        <p>优先展示可订时段和附近球局，适合现场快速演示。</p>',
+      '        <strong>' + h(availableGames) + ' 场可约</strong>',
+      '        <small>' + h(waitingPlayers) + ' 人待加入</small>',
       '      </div>',
-      '      <div class="radar-map-visual" role="button" tabindex="0" data-jump-view="venues" aria-label="查看江宁热区场馆">',
-      '        <div class="mock-map-route"></div>',
-      '        <div class="mock-map-zone zone-a">南师附中</div>',
-      '        <div class="mock-map-zone zone-b">大学城</div>',
-      '        <div class="mock-map-zone zone-c">开发区</div>',
-      '        <button type="button" class="mock-map-pin pin-a" data-jump-view="venues"><b></b><span>3 场可订</span></button>',
-      '        <button type="button" class="mock-map-pin pin-b" data-jump-view="games"><b></b><span>' + h(Math.min(waitingPlayers, 99)) + ' 人待加入</span></button>',
-      '        <button type="button" class="mock-map-pin pin-c" data-jump-view="venues"><b></b><span>黄金时段</span></button>',
-      '        <em>模拟地图 · 正式版接入真实地图</em>',
-      '      </div>',
-      '    </article>',
-      '    <article class="radar-card radar-join-card">',
-      '      <div class="radar-copy">',
-      '        <span class="radar-kicker">待加入</span>',
-      '        <h3>' + h(waitingPlayers) + ' 个空位正在等人</h3>',
-      '        <p>按时间和实力匹配推荐，报名后生成待支付订单。</p>',
-      '        <button class="primary-btn radar-primary" type="button" data-jump-view="games">去看球局</button>',
-      '      </div>',
-      '      <button class="radar-visual radar-join-visual" type="button" data-jump-view="games">',
-      '        <img src="https://images.unsplash.com/photo-1518091043644-c1d4457512c6?auto=format&fit=crop&w=1200&q=80" alt="待加入球局" />',
-      '        <span>附近球局 · 即将开场</span>',
-      '      </button>',
-      '    </article>',
-      '  </div>',
-      '    <div class="radar-scroll-hint"><span>左右滑动查看更多</span><i class="is-active"></i><i></i><i></i></div>',
-      '  </div>',
-      '  <form class="home-search-row" data-venue-search-form>',
-      '    <button class="location-pill" type="button" data-area-filter="all">南京</button>',
-      '    <input class="search-box" name="venue_search" value="' + h(state.venueSearch || '') + '" placeholder="请输入场馆名称、地址" autocomplete="off" />',
-      '    <button class="mini-icon-btn" type="submit">搜索</button>',
-      '    <button class="mini-icon-btn" type="button" data-jump-view="messages">消息</button>',
-      '  </form>',
-      '  <div class="service-strip">',
-      serviceTile('community', '社区', '找球友', 'messages'),
-      serviceTile('team', '球队', '固定队', 'teams'),
-      serviceTile('football', '足球场', '立即订', 'venues'),
-      serviceTile('basketball', '篮球场', '快速订', 'games'),
-      serviceTile('publish', '发布', '发局报名', 'create'),
-      '  </div>',
+      '    </button>',
+      '  </section>',
+      '  <section class="home-flow">',
+      '    <div class="home-flow-head">',
+      '      <h3>怎么开始</h3>',
+      '      <span>三步就能开打</span>',
+      '    </div>',
+      '    <div class="home-flow-grid">',
+      '      <button class="home-flow-step" type="button" data-jump-view="venues"><strong>1</strong><h4>先选场地</h4><p>按位置、项目和时间筛出可订选项。</p></button>',
+      '      <button class="home-flow-step" type="button" data-jump-view="games"><strong>2</strong><h4>再看球局</h4><p>直接进缺人的局，少一点决策负担。</p></button>',
+      '      <button class="home-flow-step" type="button" data-jump-view="create"><strong>3</strong><h4>马上开打</h4><p>报名、支付、核销都在同一条链路里。</p></button>',
+      '    </div>',
+      '  </section>',
       '  <section class="section">',
       '    <div class="panel-title"><h3>今日球局(' + h((state.data.games || []).length) + ')</h3><button class="text-link" type="button" data-jump-view="games">更多</button></div>',
       '    <div class="home-game-list">' + nextGames.map(homeGameCard).join('') + '</div>',
       '  </section>',
-      '  <div class="home-mini-grid">',
-      '    <button type="button" class="mini-promo" data-jump-view="venues"><span class="tag blue">好馆尝鲜</span><strong>精选合作场馆</strong><p>先看离你近的，再看价格和时段。</p><em>去订场</em></button>',
-      '    <button type="button" class="mini-promo" data-jump-view="credit"><span class="tag">球友笔记</span><strong>记录你的出勤</strong><p>签到、报名、守约都能追踪。</p><em>看信用</em></button>',
-      '    <button type="button" class="mini-promo" data-jump-view="teams"><span class="tag orange">球队管理</span><strong>固定队伍入口</strong><p>队长可建队，成员可加入。</p><em>去球队</em></button>',
-      '  </div>',
       '  <section class="section">',
       '    <div class="panel-title"><h3>推荐场馆</h3><button class="text-link" type="button" data-jump-view="venues">更多</button></div>',
       '    <div class="home-venue-list">' + featuredVenues.map(homeVenueCard).join('') + '</div>',
       '  </section>',
       '</section>',
     ].join('');
+  }
+
+  function megaItem(view, title, meta, action) {
+    return '<button class="mega-item" type="button" data-jump-view="' + h(view) + '"><span class="mega-dot"></span><strong>' + h(title) + '</strong><em>' + h(meta) + '</em><small>' + h(action) + '</small></button>';
   }
 
   function serviceTile(icon, label, note, view) {
@@ -684,7 +859,14 @@
       seenVenueKeys.add(key);
       var okArea = state.venueFilter === 'all' || venue.area.indexOf(state.venueFilter) >= 0;
       var okSport = state.sportFilter === 'all' || (venue.sports || []).indexOf(state.sportFilter) >= 0;
-      var searchable = [venue.name, venue.address, venue.area, venue.contact].join(' ').toLowerCase();
+      var searchable = [
+        venue.name,
+        venue.address,
+        venue.area,
+        venue.contact,
+        (venue.sports || []).map(sportLabel).join(' '),
+        (venue.open_slots || []).join(' ')
+      ].join(' ').toLowerCase();
       var okKeyword = !keyword || searchable.indexOf(keyword) >= 0;
       return okArea && okSport && okKeyword;
     });
@@ -800,8 +982,19 @@
 
   function gamesView() {
     var myRating = Number(ratingSummary().composite_score || 3);
+    var keyword = String(state.venueSearch || '').trim().toLowerCase();
     var games = [].concat(state.data.games || []).filter(function (game) {
-      return state.sportFilter === 'all' || game.sport === state.sportFilter;
+      var okSport = state.sportFilter === 'all' || game.sport === state.sportFilter;
+      var searchable = [
+        game.title,
+        game.venue_name,
+        game.area,
+        game.address,
+        sportLabel(game.sport),
+        game.status
+      ].join(' ').toLowerCase();
+      var okKeyword = !keyword || searchable.indexOf(keyword) >= 0;
+      return okSport && okKeyword;
     }).sort(function (a, b) {
       var aDiff = Math.abs(Number(a.average_rating == null ? 3 : a.average_rating) - myRating);
       var bDiff = Math.abs(Number(b.average_rating == null ? 3 : b.average_rating) - myRating);
@@ -812,6 +1005,7 @@
     return [
       '<section class="section">',
       state.userView === 'games' ? profileBackTitle('附近球局', '实力匹配优先，先付后打') : '<div class="panel-title"><h3>附近球局</h3><span>实力匹配优先，先付后打</span></div>',
+      keyword ? '  <div class="filter-result-note">搜索：' + h(state.venueSearch) + '，找到 ' + h(games.length) + ' 场球局 <button type="button" data-clear-venue-search>清除</button></div>' : '',
       '  <div class="games-list">' + (games.length ? games.map(gameCard).join('') : '<div class="empty">暂无球局</div>') + '</div>',
       '</section>',
       state.reviewDetail ? reviewPanel(state.reviewDetail) : '',
@@ -1060,7 +1254,10 @@
     var orders = state.data.myOrders || [];
     var user = session() || {};
     var rating = ratingSummary();
-    var username = user.username || user.name || 'demo_player';
+    var username = profileDemoValue('nickname', user.username || user.name || 'demo_player');
+    var city = profileDemoValue('city', '南京');
+    var sport = profileDemoValue('sport', '足球 / 篮球');
+    var bio = profileDemoValue('bio', 'SnapSport 球友');
     var pendingOrders = orders.filter(function (order) {
       return ['pending_payment', 'paid'].includes(order.status);
     }).length;
@@ -1073,10 +1270,11 @@
       '      <span class="profile-avatar">' + h(initials(username)) + '</span>',
       '      <div class="profile-user-main">',
       '        <h2>' + h(username) + '</h2>',
-      '        <p>南京 · SnapSport 球友</p>',
+      '        <p>' + h(city) + ' · ' + h(bio) + '</p>',
       '        <div class="profile-tags"><span>信用 ' + h(credit) + '</span><span>' + h(rating.level_label || '进阶') + ' ' + oneDecimal(rating.composite_score, 3) + '分</span></div>',
+      '        <div class="profile-tags profile-sport-tags"><span>' + h(sport) + '</span><span>' + h(profileDemoValue('privacy', '公开约球资料')) + '</span></div>',
       '      </div>',
-      '      <button class="profile-edit-btn" type="button" data-profile-toast="编辑资料将在正式版开放">编辑</button>',
+      '      <button class="profile-edit-btn" type="button" data-open-profile-edit>编辑</button>',
       '    </div>',
       '    <div class="profile-stats">',
       '      <button type="button" data-user-view="orders"><strong>' + h(orders.length) + '</strong><span>订单</span></button>',
@@ -1102,7 +1300,7 @@
       '  <div class="profile-menu-card">',
       profileMenuItem('support', '联系客服', '模拟客服窗口', null, 'data-open-support'),
       profileMenuItem('feedback', '投诉反馈', '演示用本地反馈', null, 'data-open-support'),
-      profileMenuItem('setting', '设置 / 更多', '正式版接入隐私与通知', null, 'data-profile-toast="设置功能将在正式版接入"'),
+      profileMenuItem('setting', '设置 / 更多', '黑客松演示配置', null, 'data-open-settings'),
       '  </div>',
       '  <details class="profile-rating-details">',
       '    <summary><span>我的实力评级</span><em>展开自评与互评明细</em></summary>',
@@ -1111,6 +1309,8 @@
       '  <button class="profile-logout" type="button" data-local-logout>退出登录</button>',
       '</section>',
       state.supportOpen ? supportWindow() : '',
+      state.settingsOpen ? settingsWindow() : '',
+      state.profileEditOpen ? profileEditSheet() : '',
       state.reviewDetail ? reviewPanel(state.reviewDetail) : '',
       state.playerProfile ? playerProfileModal(state.playerProfile) : '',
     ].join('');
@@ -1244,6 +1444,129 @@
     return '已收到。黑客松演示版先用本地模拟客服，正式版可接入微信客服或人工工单。';
   }
 
+  function settingsWindow() {
+    var me = state.data.me || {};
+    var orders = state.data.myOrders || [];
+    var notifications = notificationList();
+    return [
+      '<div class="settings-backdrop" data-close-settings>',
+      '  <section class="settings-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
+      '    <div class="settings-head">',
+      '      <div><span>Hackathon Settings</span><h3>演示设置</h3><p>用于展示隐私、通知、信用和数据接入能力。</p></div>',
+      '      <button type="button" data-close-settings>关闭</button>',
+      '    </div>',
+      '    <div class="settings-status-grid">',
+      settingsStatus('信用分', me.credit_score || 100, '守约账户'),
+      settingsStatus('订单', orders.length, '本地数据库'),
+      settingsStatus('消息', notifications.length, '通知中心'),
+      '    </div>',
+      '    <div class="settings-group">',
+      '      <h4>演示模式</h4>',
+      settingsToggle('黑客松讲解模式', '开启后突出主闭环入口', true),
+      settingsToggle('液态玻璃主题', '当前绿色运动视觉系统', true),
+      settingsToggle('展示模拟数据', '用于无真实场馆时演示完整流程', true),
+      '    </div>',
+      '    <div class="settings-group">',
+      '      <h4>通知与隐私</h4>',
+      settingsToggle('开赛提醒', '开场前推送报名和核销提醒', true),
+      settingsToggle('互评提醒', '赛后 24 小时内提示完成互评', true),
+      settingsToggle('匿名互评', '默认隐藏评价人身份', true),
+      '    </div>',
+      '    <div class="settings-group">',
+      '      <h4>正式版接入</h4>',
+      settingsLink('微信服务通知', '待接入订阅消息与客服工单'),
+      settingsLink('真实地图定位', '接入附近场馆距离与路线'),
+      settingsLink('隐私与数据导出', '用户可导出报名、信用和评分记录'),
+      '    </div>',
+      '  </section>',
+      '</div>',
+    ].join('');
+  }
+
+  function settingsStatus(label, value, note) {
+    return '<div class="settings-status"><span>' + h(label) + '</span><strong>' + h(value) + '</strong><small>' + h(note) + '</small></div>';
+  }
+
+  function settingsToggle(title, desc, checked) {
+    return '<button type="button" class="settings-row" data-settings-demo><span><strong>' + h(title) + '</strong><small>' + h(desc) + '</small></span><em class="' + (checked ? 'is-on' : '') + '"></em></button>';
+  }
+
+  function settingsLink(title, desc) {
+    return '<button type="button" class="settings-row" data-settings-demo><span><strong>' + h(title) + '</strong><small>' + h(desc) + '</small></span><b>›</b></button>';
+  }
+
+  function profileEditSheet() {
+    var user = session() || {};
+    var nickname = profileDemoValue('nickname', user.username || user.name || 'demo_player');
+    var city = profileDemoValue('city', '南京');
+    var sport = profileDemoValue('sport', '足球 / 篮球');
+    var bio = profileDemoValue('bio', 'SnapSport 球友');
+    var privacy = profileDemoValue('privacy', '公开约球资料');
+    return [
+      '<div class="profile-edit-backdrop" data-close-profile-edit>',
+      '  <section class="profile-edit-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
+      '    <div class="profile-edit-head">',
+      '      <div><span>Hackathon Profile</span><h3>编辑展示资料</h3><p>用于演示个人主页、约球偏好和隐私展示，不修改真实登录账号。</p></div>',
+      '      <button type="button" data-close-profile-edit>关闭</button>',
+      '    </div>',
+      '    <form class="profile-edit-form" data-profile-edit-form>',
+      '      <div class="profile-edit-preview">',
+      '        <span class="profile-avatar">' + h(initials(nickname)) + '</span>',
+      '        <div><strong data-profile-preview-name>' + h(nickname) + '</strong><small data-profile-preview-meta>' + h(city) + ' · ' + h(bio) + '</small><em>' + h(sport) + '</em></div>',
+      '      </div>',
+      '      <div class="profile-edit-grid">',
+      field('昵称', '<input name="nickname" maxlength="24" value="' + h(nickname) + '" data-profile-preview-input="name" />'),
+      field('城市 / 校区', '<input name="city" maxlength="24" value="' + h(city) + '" data-profile-preview-input="city" />'),
+      field('主玩项目', '<select name="sport" data-profile-preview-input="sport"><option value="足球 / 篮球"' + (sport === '足球 / 篮球' ? ' selected' : '') + '>足球 / 篮球</option><option value="足球"' + (sport === '足球' ? ' selected' : '') + '>足球</option><option value="篮球"' + (sport === '篮球' ? ' selected' : '') + '>篮球</option><option value="羽毛球 / 跑步"' + (sport === '羽毛球 / 跑步' ? ' selected' : '') + '>羽毛球 / 跑步</option></select>'),
+      field('展示权限', '<select name="privacy"><option value="公开约球资料"' + (privacy === '公开约球资料' ? ' selected' : '') + '>公开约球资料</option><option value="仅同场球友可见"' + (privacy === '仅同场球友可见' ? ' selected' : '') + '>仅同场球友可见</option><option value="隐藏评分细节"' + (privacy === '隐藏评分细节' ? ' selected' : '') + '>隐藏评分细节</option></select>'),
+      '      </div>',
+      field('一句话介绍', '<textarea name="bio" maxlength="80" data-profile-preview-input="bio">' + h(bio) + '</textarea>'),
+      '      <div class="profile-edit-chips" aria-label="展示标签">',
+      '        <span>黑客松展示</span><span>守约账户</span><span>约局偏好</span><span>隐私开关</span>',
+      '      </div>',
+      '      <div class="profile-edit-actions">',
+      '        <button class="secondary-btn" type="button" data-close-profile-edit>取消</button>',
+      '        <button class="primary-btn" type="submit">保存展示资料</button>',
+      '      </div>',
+      '    </form>',
+      '  </section>',
+      '</div>',
+    ].join('');
+  }
+
+  function friendAddSheet() {
+    var added = new Set((state.addedFriends || []).map(String));
+    return [
+      '<div class="friend-add-backdrop" data-close-friend-add>',
+      '  <section class="friend-add-sheet" role="dialog" aria-modal="true" onclick="event.stopPropagation()">',
+      '    <div class="friend-add-head">',
+      '      <div><span>Team Finder</span><h3>添加球友</h3><p>黑客松展示版：根据项目、校区和活跃时间推荐附近球友。</p></div>',
+      '      <button type="button" data-close-friend-add>关闭</button>',
+      '    </div>',
+      '    <div class="friend-add-summary">',
+      '      <strong>' + h((state.addedFriends || []).length) + '</strong><span>已添加展示球友</span><em>可用于组局邀请、队伍补位和赛后互评演示</em>',
+      '    </div>',
+      '    <div class="friend-recommend-list">',
+      friendRecommendations().map(function (friend) {
+        var isAdded = added.has(String(friend.id));
+        return [
+          '<article class="friend-card">',
+          '  <span class="friend-avatar">' + h(initials(friend.name)) + '</span>',
+          '  <div class="friend-main">',
+          '    <div><strong>' + h(friend.name) + '</strong><span class="tag blue">' + h(friend.level) + '</span></div>',
+          '    <p>' + h(friend.city) + ' · ' + h(friend.sport) + '</p>',
+          '    <small>' + h(friend.note) + '</small>',
+          '  </div>',
+          '  <button type="button" class="' + (isAdded ? 'secondary-btn' : 'primary-btn') + ' small-btn" data-add-friend="' + h(friend.id) + '"' + (isAdded ? ' disabled' : '') + '>' + (isAdded ? '已添加' : '添加') + '</button>',
+          '</article>',
+        ].join('');
+      }).join(''),
+      '    </div>',
+      '  </section>',
+      '</div>',
+    ].join('');
+  }
+
   function messagesView() {
     var messages = notificationList();
     return [
@@ -1251,7 +1574,9 @@
       '  <div class="panel-title"><h3>消息中心</h3><span>报名、核销、互评提醒</span></div>',
       messages.length ? '<div class="message-list">' + messages.map(function (item) {
         var canMarkRead = item.id && item.status === 'unread';
-        return '<article class="message-card"><div><strong>' + h(item.title) + '</strong><p>' + h(item.body) + '</p></div><div class="message-side"><span>' + h(item.time) + '</span>' + (canMarkRead ? '<button class="secondary-btn small-btn" type="button" data-read-notification="' + h(item.id) + '">已读</button>' : '<span class="tag gray">已读</span>') + '</div></article>';
+        var statusText = item.status === 'unread' ? '未读' : item.status === 'demo' ? '演示' : '已读';
+        var statusClass = item.status === 'unread' ? 'green' : item.status === 'demo' ? 'blue' : 'gray';
+        return '<article class="message-card ' + (item.status === 'unread' ? 'is-unread' : '') + '"><div><span class="message-type">' + h(item.type || '系统通知') + '</span><strong>' + h(item.title) + '</strong><p>' + h(item.body) + '</p></div><div class="message-side"><span>' + h(item.time) + '</span>' + (canMarkRead ? '<button class="secondary-btn small-btn" type="button" data-read-notification="' + h(item.id) + '">已读</button>' : '<span class="tag ' + statusClass + '">' + h(statusText) + '</span>') + '</div></article>';
       }).join('') + '</div>' : '<div class="empty">暂无消息</div>',
       '</section>',
     ].join('');
@@ -1314,7 +1639,9 @@
       '      <button class="primary-btn" type="button" data-run-ai-demo>' + (analyzed ? '重新分析' : '开始 AI 分析') + '</button>',
       '      <button class="secondary-btn" type="button" data-seek-goal-demo>跳到进球片段</button>',
       '    </div>',
+      '    <div data-ai-demo-result>',
       analyzed ? aiDemoResultCard() : aiDemoPendingCard(),
+      '    </div>',
       '    <form class="form-grid" data-create-clip>',
       field('关联球局', '<select name="game_id"><option value="">不关联球局</option>' + games.map(function (game) { return '<option value="' + h(game.id) + '">' + h(game.title) + '</option>'; }).join('') + '</select>'),
       field('视频链接/文件名', '<input name="video_url" value="snap-goal-demo.mp4" />'),
@@ -1356,6 +1683,23 @@
       '  <button class="secondary-btn" type="button" data-profile-toast="演示版已生成分享卡片，正式版可保存到相册">保存分享卡</button>',
       '</div>',
     ].join('');
+  }
+
+  function markAiDemoAnalyzed() {
+    var wasAnalyzed = state.aiDemoAnalyzed;
+    state.aiDemoAnalyzed = true;
+    var overlay = app.querySelector('.ai-demo-overlay');
+    if (overlay) {
+      overlay.classList.add('is-done');
+      var label = overlay.querySelector('span');
+      var title = overlay.querySelector('strong');
+      if (label) label.textContent = '高光已生成';
+      if (title) title.textContent = '识别到 1 次进球事件';
+    }
+    var runButton = app.querySelector('[data-run-ai-demo]');
+    if (runButton) runButton.textContent = '重新分析';
+    var result = app.querySelector('[data-ai-demo-result]');
+    if (result && !wasAnalyzed) result.innerHTML = aiDemoResultCard();
   }
 
   function clipList(clips) {
@@ -1505,7 +1849,57 @@
         time: fmtDate(rating.update_time),
       });
     }
+    if (!messages.length) {
+      messages = demoNotifications();
+    }
     return messages.slice(0, 80);
+  }
+
+  function demoNotifications() {
+    return [
+      {
+        type: '报名提醒',
+        title: '今晚 19:30 足球局报名成功',
+        body: '江宁大学城五人制足球局已为你保留名额，当前 8/10 人，成局后会自动锁局。',
+        time: '今天 14:26',
+        status: 'unread',
+      },
+      {
+        type: '核销提醒',
+        title: '到场后出示核销码 S8271',
+        body: '南京合作足球馆 A 场，开赛前 15 分钟可在场馆前台完成核销。',
+        time: '今天 17:45',
+        status: 'demo',
+      },
+      {
+        type: '开赛提醒',
+        title: '球局即将开始',
+        body: '距离开赛还有 45 分钟，建议提前到场热身。若临时无法参加，请尽快联系队长。',
+        time: '今天 18:45',
+        status: 'demo',
+      },
+      {
+        type: '互评提醒',
+        title: '赛后互评将在结束后开放',
+        body: '完成匿名互评后，系统会更新你的信用记录与五维实力评分。',
+        time: '明天 21:30',
+        status: 'demo',
+      },
+      {
+        type: '场馆动态',
+        title: '大学城室内篮球馆新增黄金时段',
+        body: '周六 18:00-20:00 已开放预约，可在订场页按“黄金时段”筛选。',
+        time: '昨天 20:18',
+        status: 'demo',
+      },
+      {
+        type: 'AI 集锦',
+        title: '比赛高光任务已进入队列',
+        body: '演示版将生成进球片段、跑动热区和可分享的社群文案。',
+        time: '06-17 22:12',
+        status: 'demo',
+      },
+    ];
   }
 
   function myOrderList(orders, emptyText) {
@@ -1558,7 +1952,7 @@
       me: meView,
     }[state.userView]();
     var isHome = state.userView === 'home';
-    return (isHome ? hero() : userTabs() + body) + mobileTabbar();
+    return isHome ? hero() : body;
   }
 
   function mobileTabbar() {
@@ -1747,7 +2141,7 @@
   function render() {
     state.mode = 'user';
     var content = userMode();
-    app.innerHTML = topbar() + returnHomeFab() + '<main class="page">' + content + '</main>' + (state.toast ? '<div class="toast">' + h(state.toast) + '</div>' : '');
+    app.innerHTML = topbar() + returnHomeFab() + '<main class="page">' + content + '</main>' + searchOverlay() + (state.friendAddOpen ? friendAddSheet() : '') + (state.toast ? '<div class="toast">' + h(state.toast) + '</div>' : '');
     bindEvents();
   }
 
@@ -1792,8 +2186,7 @@
       });
     });
 
-    var venueSearchForm = app.querySelector('[data-venue-search-form]');
-    if (venueSearchForm) {
+    app.querySelectorAll('[data-venue-search-form]').forEach(function (venueSearchForm) {
       var searchInput = venueSearchForm.querySelector('input[name="venue_search"]');
       if (searchInput) {
         searchInput.addEventListener('input', function () {
@@ -1803,16 +2196,44 @@
       venueSearchForm.addEventListener('submit', function (event) {
         event.preventDefault();
         state.venueSearch = (searchInput && searchInput.value || '').trim();
-        goToUserView('venues');
+        state.searchOpen = false;
+        goToUserView(searchTargetView(state.venueSearch));
         track('venue_search', { metadata: { keyword: state.venueSearch } });
         render();
       });
-    }
+    });
 
     app.querySelectorAll('[data-clear-venue-search]').forEach(function (button) {
       button.addEventListener('click', function () {
         state.venueSearch = '';
         render();
+      });
+    });
+
+    bindSearchQuickCards();
+
+    app.querySelectorAll('[data-focus-search]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.searchOpen = true;
+        render();
+        setTimeout(function () {
+          var input = app.querySelector('[data-search-autofocus]');
+          if (input) input.focus();
+        }, 0);
+      });
+    });
+
+    app.querySelectorAll('[data-close-search]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        state.searchOpen = false;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-search-intent]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.searchIntent = button.getAttribute('data-search-intent') || 'recommend';
+        refreshSearchOverlay();
       });
     });
 
@@ -1861,6 +2282,95 @@
       node.addEventListener('click', function () {
         state.supportOpen = false;
         render();
+      });
+    });
+
+    app.querySelectorAll('[data-open-settings]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.settingsOpen = true;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-close-settings]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        state.settingsOpen = false;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-open-profile-edit]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.profileEditOpen = true;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-close-profile-edit]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        state.profileEditOpen = false;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-open-friend-add]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.friendAddOpen = true;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-close-friend-add]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        state.friendAddOpen = false;
+        render();
+      });
+    });
+
+    app.querySelectorAll('[data-add-friend]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var friendId = button.getAttribute('data-add-friend');
+        var next = Array.from(new Set([].concat(state.addedFriends || [], friendId).filter(Boolean).map(String)));
+        saveAddedFriends(next);
+        render();
+        showToast('已添加推荐球友');
+      });
+    });
+
+    var profileEditForm = app.querySelector('[data-profile-edit-form]');
+    if (profileEditForm) {
+      var syncProfilePreview = function () {
+        var nickname = (profileEditForm.querySelector('[name="nickname"]') || {}).value || '球友';
+        var city = (profileEditForm.querySelector('[name="city"]') || {}).value || '南京';
+        var bio = (profileEditForm.querySelector('[name="bio"]') || {}).value || 'SnapSport 球友';
+        var sport = (profileEditForm.querySelector('[name="sport"]') || {}).value || '足球 / 篮球';
+        var nameNode = profileEditForm.querySelector('[data-profile-preview-name]');
+        var metaNode = profileEditForm.querySelector('[data-profile-preview-meta]');
+        var sportNode = profileEditForm.querySelector('.profile-edit-preview em');
+        if (nameNode) nameNode.textContent = nickname;
+        if (metaNode) metaNode.textContent = city + ' · ' + bio;
+        if (sportNode) sportNode.textContent = sport;
+      };
+      profileEditForm.addEventListener('input', syncProfilePreview);
+      profileEditForm.addEventListener('change', syncProfilePreview);
+      profileEditForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        saveProfileDemo({
+          nickname: (profileEditForm.querySelector('[name="nickname"]') || {}).value || '',
+          city: (profileEditForm.querySelector('[name="city"]') || {}).value || '',
+          sport: (profileEditForm.querySelector('[name="sport"]') || {}).value || '',
+          privacy: (profileEditForm.querySelector('[name="privacy"]') || {}).value || '',
+          bio: (profileEditForm.querySelector('[name="bio"]') || {}).value || '',
+        });
+        state.profileEditOpen = false;
+        render();
+        showToast('展示资料已更新');
+      });
+    }
+
+    app.querySelectorAll('[data-settings-demo]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        showToast('演示版展示设置入口，正式版接入真实配置');
       });
     });
 
@@ -2205,25 +2715,32 @@
     var runAiDemo = app.querySelector('[data-run-ai-demo]');
     if (runAiDemo) {
       runAiDemo.addEventListener('click', function () {
-        state.aiDemoAnalyzed = true;
-        render();
-        showToast('AI 高光已生成');
+        markAiDemoAnalyzed();
+        showInlineToast('AI 高光已生成');
       });
     }
 
     var seekAiDemo = app.querySelector('[data-seek-goal-demo]');
     if (seekAiDemo) {
       seekAiDemo.addEventListener('click', function () {
-        if (!state.aiDemoAnalyzed) {
-          state.aiDemoAnalyzed = true;
-          render();
-        }
+        markAiDemoAnalyzed();
         var video = app.querySelector('.ai-demo-player video');
         if (video && typeof video.currentTime === 'number') {
-          video.currentTime = Math.min(Math.max(video.duration ? video.duration * 0.48 : 8, 0), video.duration || 9999);
-          video.play().catch(function () {});
+          var targetTime = video.duration ? Math.min(8, Math.max(video.duration - 0.5, 0)) : 8;
+          try {
+            video.pause();
+            video.muted = true;
+            if (Math.abs((video.currentTime || 0) - targetTime) > 0.35) {
+              video.currentTime = targetTime;
+            }
+          } catch (error) {}
         }
-        showToast('已跳到进球片段');
+        var timeline = app.querySelector('.ai-timeline');
+        if (timeline) {
+          timeline.classList.add('is-jumped');
+          window.setTimeout(function () { timeline.classList.remove('is-jumped'); }, 900);
+        }
+        showInlineToast('已定位到进球片段');
       });
     }
 

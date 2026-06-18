@@ -1,16 +1,16 @@
 :root {
-  --local-auth-bg: #f4f7f2;
-  --local-auth-ink: #142018;
-  --local-auth-muted: #66736b;
-  --local-auth-line: #d8e0d2;
-  --local-auth-brand: #167a48;
-  --local-auth-brand-dark: #0f5633;
-  --local-auth-green: #167a48;
+  --local-auth-bg: #eef4ea;
+  --local-auth-ink: #0f1d15;
+  --local-auth-muted: #617067;
+  --local-auth-line: #d4ddcc;
+  --local-auth-brand: #18a05a;
+  --local-auth-brand-dark: #107744;
+  --local-auth-green: #18a05a;
   --local-auth-red: #cf2e2e;
-  --local-auth-yellow: #c8ea50;
+  --local-auth-yellow: #d8f45c;
   --local-auth-panel: #ffffff;
-  --local-auth-soft: #f9fbf6;
-  --local-auth-shadow: 0 16px 40px rgba(31, 46, 36, 0.12);
+  --local-auth-soft: #f8fbf5;
+  --local-auth-shadow: 0 18px 44px rgba(31, 46, 36, 0.12);
 }
 
 .local-auth-lock {
@@ -43,7 +43,7 @@
   width: min(1040px, 100%);
   overflow: hidden;
   border: 1px solid var(--local-auth-line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--local-auth-panel);
   box-shadow: var(--local-auth-shadow);
 }
@@ -63,8 +63,8 @@
   padding: 34px;
   color: #fff;
   background:
-    linear-gradient(90deg, rgba(13, 35, 22, 0.92), rgba(13, 35, 22, 0.50)),
-    url("https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1600&q=80") center/cover;
+    linear-gradient(90deg, rgba(7, 33, 19, 0.92), rgba(10, 69, 40, 0.42)),
+    url("https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1600&q=80") center/cover;
 }
 
 .local-auth-kicker,
@@ -93,7 +93,7 @@
   max-width: 520px;
   margin: 18px 0 14px;
   font-family: inherit;
-  font-size: clamp(36px, 5vw, 64px);
+  font-size: clamp(40px, 5vw, 68px);
   font-weight: 900;
   line-height: 1.02;
   letter-spacing: 0;
@@ -116,7 +116,7 @@
 .local-auth-chip {
   min-height: 92px;
   border: 1px solid rgba(255, 255, 255, 0.26);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 12px;
   background: rgba(255, 255, 255, 0.14);
   box-shadow: none;
@@ -151,7 +151,7 @@
 .local-auth-switch {
   min-height: 40px;
   border: 1px solid var(--local-auth-line);
-  border-radius: 8px;
+  border-radius: 10px;
   color: var(--local-auth-ink);
   background: var(--local-auth-soft);
   box-shadow: none;
@@ -181,7 +181,7 @@
 .local-auth-field select {
   width: 100%;
   border: 1px solid var(--local-auth-line);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 11px 12px;
   color: var(--local-auth-ink);
   background: #fff;
@@ -199,7 +199,7 @@
 .local-auth-logout {
   min-height: 42px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 16px;
   box-shadow: none;
   cursor: pointer;
@@ -245,7 +245,7 @@
   align-items: center;
   gap: 10px;
   border: 1px solid var(--local-auth-line);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 8px 8px 12px;
   background: #fff;
   box-shadow: var(--local-auth-shadow);
@@ -296,5 +296,104 @@
     bottom: 12px;
     left: 12px;
     justify-content: space-between;
+  }
+}
+
+/* Youth sport direction */
+.local-auth-overlay {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(223, 246, 94, 0.28), transparent 28%),
+    radial-gradient(circle at 82% 12%, rgba(45, 108, 242, 0.10), transparent 26%),
+    linear-gradient(180deg, #f8fbf4, var(--local-auth-bg));
+}
+
+.local-auth-card {
+  width: min(1120px, calc(100% - 48px));
+  border-color: rgba(24, 160, 90, 0.22);
+}
+
+.local-auth-brief::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, rgba(223, 246, 94, 0.16), transparent 42%),
+    linear-gradient(0deg, rgba(5, 24, 14, 0.2), transparent 34%);
+}
+
+.local-auth-brief > * {
+  position: relative;
+  z-index: 1;
+}
+
+.local-auth-kicker {
+  min-height: 38px;
+  align-items: center;
+  padding: 8px 16px;
+  box-shadow: 0 10px 24px rgba(223, 246, 94, 0.2);
+}
+
+.local-auth-title {
+  text-wrap: balance;
+}
+
+.local-auth-copy {
+  max-width: 520px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 16px;
+}
+
+.local-auth-chip {
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.local-auth-chip span {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.local-auth-panel {
+  background:
+    linear-gradient(180deg, #ffffff, #fbfdf8);
+}
+
+.local-auth-switch {
+  min-height: 48px;
+  font-size: 18px;
+}
+
+.local-auth-switch.is-active,
+.local-auth-submit {
+  background: linear-gradient(135deg, var(--local-auth-brand), #12c172);
+  box-shadow: 0 12px 24px rgba(24, 160, 90, 0.22);
+}
+
+.local-auth-submit {
+  min-height: 50px;
+  font-size: 18px;
+}
+
+.local-auth-field {
+  font-size: 14px;
+}
+
+.local-auth-field input,
+.local-auth-field select {
+  min-height: 52px;
+  font-size: 16px;
+}
+
+@media (max-width: 820px) {
+  .local-auth-card {
+    width: min(100%, calc(100% - 24px));
+  }
+
+  .local-auth-title {
+    font-size: 38px;
+  }
+
+  .local-auth-copy {
+    font-size: 14px;
   }
 }
